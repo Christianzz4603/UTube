@@ -1,0 +1,6 @@
+{
+  "name": "YouTube",
+  "description": "Full-featured YouTube video streaming experience with real video playback, Shorts vertical feed, Subscriptions, Community posts, Comments, Playlists, Watch History, and Creator Studio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

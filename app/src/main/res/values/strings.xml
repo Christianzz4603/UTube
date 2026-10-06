@@ -1,0 +1,26 @@
+<resources>
+    <string name="app_name">YouTube</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_shorts">Shorts</string>
+    <string name="nav_create">Create</string>
+    <string name="nav_subscriptions">Subscriptions</string>
+    <string name="nav_you">You</string>
+    <string name="search_hint">Search YouTube</string>
+    <string name="subscribe">Subscribe</string>
+    <string name="subscribed">Subscribed</string>
+    <string name="comments_header">Comments</string>
+    <string name="add_comment_hint">Add a comment…</string>
+    <string name="watch_history">History</string>
+    <string name="playlists">Playlists</string>
+    <string name="your_videos">Your videos</string>
+    <string name="downloads">Downloads</string>
+    <string name="liked_videos">Liked videos</string>
+    <string name="watch_later">Watch Later</string>
+    <string name="share">Share</string>
+    <string name="remix">Remix</string>
+    <string name="save">Save</string>
+    <string name="clip">Clip</string>
+    <string name="ambient_mode">Ambient mode</string>
+    <string name="playback_speed">Playback speed</string>
+    <string name="video_quality">Quality</string>
+</resources>

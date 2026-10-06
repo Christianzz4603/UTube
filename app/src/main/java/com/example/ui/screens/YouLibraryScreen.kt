@@ -1,0 +1,693 @@
+package com.example.ui.screens
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.data.PlaylistEntity
+import com.example.data.VideoEntity
+import com.example.data.formatDuration
+import com.example.ui.YouTubeViewModel
+import com.example.ui.components.ChannelAvatarBadge
+import com.example.ui.components.VideoThumbnailImage
+import com.example.ui.theme.YouTubeRed
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun YouLibraryScreen(
+    viewModel: YouTubeViewModel,
+    onEnterCast: () -> Unit
+) {
+    val watchHistory by viewModel.watchHistory.collectAsState()
+    val playlists by viewModel.allPlaylists.collectAsState()
+    val likedVideos by viewModel.likedVideos.collectAsState()
+    val watchLaterVideos by viewModel.watchLaterVideos.collectAsState()
+    val downloadedVideos by viewModel.downloadedVideos.collectAsState()
+    val allVideos by viewModel.allVideos.collectAsState()
+    val isDarkTheme by viewModel.isDarkTheme.collectAsState()
+    val isIncognito by viewModel.isIncognito.collectAsState()
+
+    var showCreatePlaylistDialog by remember { mutableStateOf(false) }
+    var selectedLibrarySection by remember { mutableStateOf<String?>(null) } // "liked", "watch_later", "downloads", "your_videos"
+    var selectedPlaylist by remember { mutableStateOf<PlaylistEntity?>(null) }
+
+    val userUploadedVideos = remember(allVideos) { allVideos.filter { it.isUserUploaded } }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("you_library_screen"),
+        contentPadding = PaddingValues(bottom = 96.dp)
+    ) {
+        // Top Utility Bar
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onEnterCast) {
+                    Icon(Icons.Outlined.Tv, contentDescription = "Cast")
+                }
+                IconButton(onClick = { viewModel.openNotifications() }) {
+                    Icon(Icons.Outlined.Notifications, contentDescription = "Notifications")
+                }
+                IconButton(onClick = { viewModel.openSearch() }) {
+                    Icon(Icons.Outlined.Search, contentDescription = "Search")
+                }
+                IconButton(
+                    onClick = { viewModel.toggleDarkTheme() },
+                    modifier = Modifier.testTag("toggle_theme_button")
+                ) {
+                    Icon(
+                        imageVector = if (isDarkTheme) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,
+                        contentDescription = "Toggle Dark/Light Theme"
+                    )
+                }
+            }
+        }
+
+        // User Profile Header
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ChannelAvatarBadge(
+                    name = "Christian Studio",
+                    colorLong = 0xFF00ACC1,
+                    size = 68.dp
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Christian Studio",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "@christianjaydelica • View channel >",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.clickable {
+                            selectedLibrarySection = "your_videos"
+                        }
+                    )
+                }
+            }
+        }
+
+        // Account Action Pills Row (Switch account, Google Account, Turn on Incognito)
+        item {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item {
+                    AssistChip(
+                        onClick = { viewModel. toggleIncognito() },
+                        label = { Text(if (isIncognito) "Turn off Incognito" else "Turn on Incognito") },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Outlined.VisibilityOff,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        modifier = Modifier.testTag("incognito_chip")
+                    )
+                }
+                item {
+                    AssistChip(
+                        onClick = { viewModel.toggleDarkTheme() },
+                        label = { Text(if (isDarkTheme) "Appearance: Dark" else "Appearance: Light") },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Outlined.Palette,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    )
+                }
+                item {
+                    AssistChip(
+                        onClick = { viewModel.openCreateSheet() },
+                        label = { Text("YouTube Studio Upload") },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Outlined.VideoCall,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    )
+                }
+            }
+        }
+
+        // Watch History Carousel
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "History",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                if (watchHistory.isNotEmpty()) {
+                    TextButton(
+                        onClick = { viewModel.clearWatchHistory() },
+                        modifier = Modifier.testTag("clear_history_button")
+                    ) {
+                        Text("Clear all")
+                    }
+                }
+            }
+
+            if (watchHistory.isEmpty()) {
+                Text(
+                    text = if (isIncognito) "Incognito mode is active — watch history is paused."
+                    else "Videos you watch will show up here.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                )
+            } else {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(watchHistory, key = { "hist_${it.id}" }) { video ->
+                        HistoryMiniVideoCard(
+                            video = video,
+                            onClick = { viewModel.openVideo(video) }
+                        )
+                    }
+                }
+            }
+        }
+
+        // Playlists Carousel
+        item {
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Playlists",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                IconButton(
+                    onClick = { showCreatePlaylistDialog = true },
+                    modifier = Modifier.testTag("create_playlist_button")
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = "New Playlist")
+                }
+            }
+
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Liked Videos built-in playlist card
+                item {
+                    PlaylistCardItem(
+                        title = "Liked videos",
+                        subtitle = "${likedVideos.size} videos • Private",
+                        previewVideo = likedVideos.firstOrNull(),
+                        onClick = { selectedLibrarySection = "liked" }
+                    )
+                }
+                // Watch Later built-in playlist card
+                item {
+                    PlaylistCardItem(
+                        title = "Watch Later",
+                        subtitle = "${watchLaterVideos.size} videos • Private",
+                        previewVideo = watchLaterVideos.firstOrNull(),
+                        onClick = { selectedLibrarySection = "watch_later" }
+                    )
+                }
+                items(playlists, key = { it.id }) { playlist ->
+                    val ids = playlist.videoIdsCsv.split(",").filter { it.isNotBlank() }
+                    val firstVideo = allVideos.find { it.id == ids.firstOrNull() }
+                    PlaylistCardItem(
+                        title = playlist.title,
+                        subtitle = "${ids.size} videos • ${playlist.privacy}",
+                        previewVideo = firstVideo,
+                        onClick = { selectedPlaylist = playlist }
+                    )
+                }
+            }
+        }
+
+        // Library Menu Rows
+        item {
+            Spacer(modifier = Modifier.height(16.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+
+            LibraryRowMenuItem(
+                icon = Icons.Outlined.SmartDisplay,
+                title = "Your videos",
+                subtitle = "${userUploadedVideos.size} uploaded videos",
+                onClick = { selectedLibrarySection = "your_videos" }
+            )
+            LibraryRowMenuItem(
+                icon = Icons.Outlined.Download,
+                title = "Downloads",
+                subtitle = "${downloadedVideos.size} videos available offline",
+                badgeIcon = Icons.Filled.CheckCircle,
+                onClick = { selectedLibrarySection = "downloads" }
+            )
+            LibraryRowMenuItem(
+                icon = Icons.Outlined.ThumbUp,
+                title = "Liked videos",
+                subtitle = "${likedVideos.size} videos",
+                onClick = { selectedLibrarySection = "liked" }
+            )
+            LibraryRowMenuItem(
+                icon = Icons.Outlined.Schedule,
+                title = "Watch Later",
+                subtitle = "${watchLaterVideos.size} videos",
+                onClick = { selectedLibrarySection = "watch_later" }
+            )
+        }
+    }
+
+    // Create Playlist Dialog
+    if (showCreatePlaylistDialog) {
+        var newTitle by remember { mutableStateOf("") }
+        var newDesc by remember { mutableStateOf("") }
+        var privacy by remember { mutableStateOf("Public") }
+
+        AlertDialog(
+            onDismissRequest = { showCreatePlaylistDialog = false },
+            title = { Text("New playlist") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = newTitle,
+                        onValueChange = { newTitle = it },
+                        label = { Text("Title") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = newDesc,
+                        onValueChange = { newDesc = it },
+                        label = { Text("Description") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("Public", "Unlisted", "Private").forEach { option ->
+                            FilterChip(
+                                selected = privacy == option,
+                                onClick = { privacy = option },
+                                label = { Text(option) }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newTitle.isNotBlank()) {
+                            viewModel.createPlaylist(newTitle, newDesc, privacy)
+                            showCreatePlaylistDialog = false
+                        }
+                    }
+                ) {
+                    Text("Create")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreatePlaylistDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Section Detail Sheet (Liked, Watch Later, Downloads, Your Videos)
+    selectedLibrarySection?.let { section ->
+        val (sheetTitle, sectionVideos) = when (section) {
+            "liked" -> "Liked videos" to likedVideos
+            "watch_later" -> "Watch Later" to watchLaterVideos
+            "downloads" -> "Downloads" to downloadedVideos
+            else -> "Your uploaded videos" to userUploadedVideos
+        }
+        ModalBottomSheet(
+            onDismissRequest = { selectedLibrarySection = null },
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Text(
+                    text = sheetTitle,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                if (sectionVideos.isEmpty()) {
+                    Text(
+                        text = "No videos in $sheetTitle yet.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 24.dp)
+                    )
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = PaddingValues(bottom = 32.dp)
+                    ) {
+                        items(sectionVideos, key = { it.id }) { video ->
+                            CompactVideoRow(
+                                video = video,
+                                onClick = {
+                                    selectedLibrarySection = null
+                                    viewModel.openVideo(video)
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Custom Playlist Detail Sheet
+    selectedPlaylist?.let { playlist ->
+        val ids = playlist.videoIdsCsv.split(",").filter { it.isNotBlank() }
+        val playlistVideos = allVideos.filter { it.id in ids }
+        ModalBottomSheet(
+            onDismissRequest = { selectedPlaylist = null },
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = playlist.title,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (playlist.description.isNotBlank()) {
+                            Text(
+                                text = playlist.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = {
+                            viewModel.deletePlaylist(playlist.id)
+                            selectedPlaylist = null
+                        }
+                    ) {
+                        Icon(Icons.Outlined.Delete, contentDescription = "Delete playlist")
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(bottom = 32.dp)
+                ) {
+                    items(playlistVideos, key = { it.id }) { video ->
+                        CompactVideoRow(
+                            video = video,
+                            onClick = {
+                                selectedPlaylist = null
+                                viewModel.openVideo(video)
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HistoryMiniVideoCard(
+    video: VideoEntity,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .width(156.dp)
+            .clickable { onClick() }
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.Black)
+        ) {
+            VideoThumbnailImage(
+                video = video,
+                modifier = Modifier.fillMaxSize()
+            )
+            Surface(
+                color = Color.Black.copy(alpha = 0.8f),
+                shape = RoundedCornerShape(4.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp)
+            ) {
+                Text(
+                    text = formatDuration(video.durationSeconds),
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                )
+            }
+            LinearProgressIndicator(
+                progress = { video.watchProgressFraction.coerceIn(0.1f, 1f) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .align(Alignment.BottomCenter),
+                color = YouTubeRed
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = video.title,
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = video.channelName,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun PlaylistCardItem(
+    title: String,
+    subtitle: String,
+    previewVideo: VideoEntity?,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .width(156.dp)
+            .clickable { onClick() }
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center
+        ) {
+            if (previewVideo != null) {
+                VideoThumbnailImage(
+                    video = previewVideo,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.35f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.PlaylistPlay,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(32.dp)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = subtitle,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun LibraryRowMenuItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    badgeIcon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = title,
+            modifier = Modifier.size(26.dp),
+            tint = MaterialTheme.colorScheme.onBackground
+        )
+        Spacer(modifier = Modifier.width(18.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (badgeIcon != null) {
+            Icon(
+                imageVector = badgeIcon,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+fun CompactVideoRow(
+    video: VideoEntity,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Box(
+            modifier = Modifier
+                .width(140.dp)
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.Black)
+        ) {
+            VideoThumbnailImage(
+                video = video,
+                modifier = Modifier.fillMaxSize()
+            )
+            Surface(
+                color = Color.Black.copy(alpha = 0.8f),
+                shape = RoundedCornerShape(4.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp)
+            ) {
+                Text(
+                    text = formatDuration(video.durationSeconds),
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = video.title,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "${video.channelName} • ${video.publishedTimeText}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
