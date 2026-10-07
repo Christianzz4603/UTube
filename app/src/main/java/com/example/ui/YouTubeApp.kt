@@ -24,7 +24,8 @@ import com.example.ui.screens.*
 @Composable
 fun YouTubeApp(
     viewModel: YouTubeViewModel,
-    onEnterPipMode: () -> Unit
+    onEnterPipMode: () -> Unit,
+    onSignOut: () -> Unit = {}
 ) {
     val selectedTab by viewModel.selectedTab.collectAsState()
     val currentPlayingVideo by viewModel.currentPlayingVideo.collectAsState()
@@ -32,6 +33,9 @@ fun YouTubeApp(
     val isSearchOpen by viewModel.isSearchOpen.collectAsState()
     val isNotificationsOpen by viewModel.isNotificationsOpen.collectAsState()
     val isCreateSheetOpen by viewModel.isCreateSheetOpen.collectAsState()
+    val isSettingsOpen by viewModel.isSettingsOpen.collectAsState()
+    val isGoLiveOpen by viewModel.isGoLiveOpen.collectAsState()
+    val isExploreTrendingOpen by viewModel.isExploreTrendingOpen.collectAsState()
     val selectedChannelId by viewModel.selectedChannelId.collectAsState()
     val saveToPlaylistVideoId by viewModel.saveToPlaylistVideoId.collectAsState()
     val snackbarMessage by viewModel.snackbarMessage.collectAsState()
@@ -115,7 +119,8 @@ fun YouTubeApp(
                 )
                 YouTubeTab.YOU -> YouLibraryScreen(
                     viewModel = viewModel,
-                    onEnterCast = { showCastDialog = true }
+                    onEnterCast = { showCastDialog = true },
+                    onSignOut = onSignOut
                 )
             }
 
@@ -135,6 +140,21 @@ fun YouTubeApp(
             // Search Overlay
             if (isSearchOpen) {
                 SearchOverlayScreen(viewModel = viewModel)
+            }
+
+            // Explore & Trending Hub Overlay
+            if (isExploreTrendingOpen) {
+                ExploreTrendingOverlayScreen(viewModel = viewModel)
+            }
+
+            // Full Settings Screen Overlay
+            if (isSettingsOpen) {
+                YouTubeSettingsScreen(viewModel = viewModel, onSignOut = onSignOut)
+            }
+
+            // Go Live Producer Overlay
+            if (isGoLiveOpen) {
+                GoLiveStudioOverlayScreen(viewModel = viewModel)
             }
 
             // Full-Screen Watch Page Overlay

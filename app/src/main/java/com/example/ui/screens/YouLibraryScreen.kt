@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,26 +17,33 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.credentials.CredentialManager
 import com.example.data.PlaylistEntity
 import com.example.data.VideoEntity
 import com.example.data.formatDuration
 import com.example.ui.YouTubeViewModel
+import com.example.ui.auth.signOutUTube
 import com.example.ui.components.ChannelAvatarBadge
 import com.example.ui.components.VideoThumbnailImage
 import com.example.ui.theme.YouTubeRed
+import com.google.firebase.Firebase
+import com.google.firebase.auth.auth
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun YouLibraryScreen(
     viewModel: YouTubeViewModel,
-    onEnterCast: () -> Unit
+    onEnterCast: () -> Unit,
+    onSignOut: () -> Unit = {}
 ) {
     val watchHistory by viewModel.watchHistory.collectAsState()
+    val cloudWatchHistory by viewModel.cloudWatchHistory.collectAsState()
     val playlists by viewModel.allPlaylists.collectAsState()
     val likedVideos by viewModel.likedVideos.collectAsState()
     val watchLaterVideos by viewModel.watchLaterVideos.collectAsState()
@@ -43,6 +51,26 @@ fun YouLibraryScreen(
     val allVideos by viewModel.allVideos.collectAsState()
     val isDarkTheme by viewModel.isDarkTheme.collectAsState()
     val isIncognito by viewModel.isIncognito.collectAsState()
+    val segmentsSkippedCount by viewModel.segmentsSkippedCount.collectAsState()
+    val secondsSavedBySponsorBlock by viewModel.secondsSavedBySponsorBlock.collectAsState()
+
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val credentialManager = remember { CredentialManager.create(context) }
+
+    val currentUser = remember { runCatching { Firebase.auth.currentUser }.getOrNull() }
+    val displayName = currentUser?.displayName?.takeIf { it.isNotBlank() } ?: "Christian Studio"
+    val userEmail = currentUser?.email ?: "christianjaydelica3@gmail.com"
+    val userHandle = "@${userEmail.substringBefore("@")}"
+
+    val combinedHistoryVideos = remember(watchHistory, cloudWatchHistory, allVideos) {
+        val cloudMapped = cloudWatchHistory.mapNotNull { doc ->
+            allVideos.find { it.id == doc.videoId }?.copy(
+                watchProgressFraction = doc.progressFraction.coerceIn(0.1f, 1f)
+            )
+        }
+        (cloudMapped + watchHistory).distinctBy { it.id }
+    }
 
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
     var selectedLibrarySection by remember { mutableStateOf<String?>(null) } // "liked", "watch_later", "downloads", "your_videos"
@@ -83,10 +111,19 @@ fun YouLibraryScreen(
                         contentDescription = "Toggle Dark/Light Theme"
                     )
                 }
+                IconButton(
+                    onClick = { viewModel.openSettings() },
+                    modifier = Modifier.testTag("open_settings_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Settings,
+                        contentDescription = "Settings"
+                    )
+                }
             }
         }
 
-        // User Profile Header
+        // User Profile Header with Google Account Sync Badge
         item {
             Row(
                 modifier = Modifier
@@ -95,21 +132,43 @@ fun YouLibraryScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 ChannelAvatarBadge(
-                    name = "Christian Studio",
+                    name = displayName,
                     colorLong = 0xFF00ACC1,
                     size = 68.dp
                 )
                 Spacer(modifier = Modifier.width(16.dp))
                 Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = displayName,
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            color = Color(0xFF00D400).copy(alpha = 0.18f),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.border(1.dp, Color(0xFF00D400), RoundedCornerShape(6.dp))
+                        ) {
+                            Text(
+                                text = "UNLOCKED FREE",
+                                color = Color(0xFF00D400),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
                     Text(
-                        text = "Christian Studio",
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold
+                        text = "$userHandle • $userEmail",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = "@christianjaydelica • View channel >",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        text = "Google Account Synced • View channel >",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        fontWeight = FontWeight.Medium,
                         modifier = Modifier.clickable {
                             selectedLibrarySection = "your_videos"
                         }
@@ -118,7 +177,52 @@ fun YouLibraryScreen(
             }
         }
 
-        // Account Action Pills Row (Switch account, Google Account, Turn on Incognito)
+        // SponsorBlock & Unlocked Stats Banner
+        item {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .clickable { viewModel.openSettings() }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Filled.Shield,
+                            contentDescription = null,
+                            tint = Color(0xFF00D400),
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "SponsorBlock Active • $segmentsSkippedCount segments skipped",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Time saved: ${secondsSavedBySponsorBlock / 60}m ${secondsSavedBySponsorBlock % 60}s • 4K60 & Background Play Free",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Icon(
+                        imageVector = Icons.Outlined.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        // Account Action Pills Row (Switch Google Account, Incognito, Appearance, Upload)
         item {
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
@@ -126,7 +230,27 @@ fun YouLibraryScreen(
             ) {
                 item {
                     AssistChip(
-                        onClick = { viewModel. toggleIncognito() },
+                        onClick = {
+                            signOutUTube(
+                                credentialManager = credentialManager,
+                                onSignOutComplete = onSignOut,
+                                scope = coroutineScope
+                            )
+                        },
+                        label = { Text("Switch Google Account") },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Outlined.AccountCircle,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        modifier = Modifier.testTag("switch_google_account_chip")
+                    )
+                }
+                item {
+                    AssistChip(
+                        onClick = { viewModel.toggleIncognito() },
                         label = { Text(if (isIncognito) "Turn off Incognito" else "Turn on Incognito") },
                         leadingIcon = {
                             Icon(
@@ -154,7 +278,7 @@ fun YouLibraryScreen(
                 item {
                     AssistChip(
                         onClick = { viewModel.openCreateSheet() },
-                        label = { Text("YouTube Studio Upload") },
+                        label = { Text("UTube Studio Upload") },
                         leadingIcon = {
                             Icon(
                                 Icons.Outlined.VideoCall,
@@ -167,7 +291,7 @@ fun YouLibraryScreen(
             }
         }
 
-        // Watch History Carousel
+        // Watch History Carousel (Synced with Google Account)
         item {
             Row(
                 modifier = Modifier
@@ -176,12 +300,19 @@ fun YouLibraryScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "History",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                if (watchHistory.isNotEmpty()) {
+                Column {
+                    Text(
+                        text = "History",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Synced with your Google Account ($userEmail)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (combinedHistoryVideos.isNotEmpty()) {
                     TextButton(
                         onClick = { viewModel.clearWatchHistory() },
                         modifier = Modifier.testTag("clear_history_button")
@@ -191,10 +322,10 @@ fun YouLibraryScreen(
                 }
             }
 
-            if (watchHistory.isEmpty()) {
+            if (combinedHistoryVideos.isEmpty()) {
                 Text(
                     text = if (isIncognito) "Incognito mode is active — watch history is paused."
-                    else "Videos you watch will show up here.",
+                    else "Videos you watch on your Google Account will show up here.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
@@ -204,7 +335,7 @@ fun YouLibraryScreen(
                     contentPadding = PaddingValues(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(watchHistory, key = { "hist_${it.id}" }) { video ->
+                    items(combinedHistoryVideos, key = { "hist_${it.id}" }) { video ->
                         HistoryMiniVideoCard(
                             video = video,
                             onClick = { viewModel.openVideo(video) }

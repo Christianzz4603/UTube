@@ -57,19 +57,37 @@ fun VideoWatchOverlay(
     val isAmbientMode by viewModel.isAmbientMode.collectAsState()
     val isCaptionsEnabled by viewModel.isCaptionsEnabled.collectAsState()
     val isAutoplayEnabled by viewModel.isAutoplayEnabled.collectAsState()
+    val isLoopVideo by viewModel.isLoopVideo.collectAsState()
+    val isStableVolume by viewModel.isStableVolume.collectAsState()
+    val isStatsForNerds by viewModel.isStatsForNerds.collectAsState()
+    val sleepTimerMinutes by viewModel.sleepTimerMinutes.collectAsState()
+    val doubleTapSeekSeconds by viewModel.doubleTapSeekSeconds.collectAsState()
+    val watchQueueVideos by viewModel.watchQueueVideos.collectAsState()
     val allVideos by viewModel.allVideos.collectAsState()
     val allChannels by viewModel.allChannels.collectAsState()
     val comments by viewModel.currentVideoComments.collectAsState()
+    val sponsorSegments by viewModel.currentVideoSponsorSegments.collectAsState()
+    val isSponsorBlockEnabled by viewModel.isSponsorBlockEnabled.collectAsState()
+    val sponsorSkipBehavior by viewModel.sponsorSkipBehavior.collectAsState()
+    val isReturnDislikeEnabled by viewModel.isReturnDislikeEnabled.collectAsState()
 
     val context = LocalContext.current
 
     var currentPositionMs by remember(video.id) { mutableIntStateOf(0) }
     var totalDurationMs by remember(video.id) { mutableIntStateOf(video.durationSeconds * 1000) }
     var showPlayerControls by remember { mutableStateOf(true) }
+    var isScreenLocked by remember { mutableStateOf(false) }
+    var isHolding2xSpeed by remember { mutableStateOf(false) }
     var seekRippleText by remember { mutableStateOf<String?>(null) }
     var showDescriptionSheet by remember { mutableStateOf(false) }
     var showCommentsSheet by remember { mutableStateOf(false) }
     var showSettingsSheet by remember { mutableStateOf(false) }
+    var showThanksSheet by remember { mutableStateOf(false) }
+    var showQueueSheet by remember { mutableStateOf(false) }
+    var showSubmitSponsorSheet by remember { mutableStateOf(false) }
+    var activeManualSkipSegment by remember(video.id) { mutableStateOf<SponsorSegmentDoc?>(null) }
+    val skippedSegmentIds = remember(video.id) { mutableStateListOf<String>() }
+    var showLiveChat by remember(video.id) { mutableStateOf(video.isLive) }
     var videoViewRef by remember { mutableStateOf<VideoView?>(null) }
 
     val channel = allChannels.find { it.id == video.channelId }
@@ -84,15 +102,37 @@ fun VideoWatchOverlay(
         viewModel.minimizePlayer()
     }
 
-    // Periodically sync VideoView progress
-    LaunchedEffect(video.id, isPlaying) {
+    // Periodically sync VideoView progress & SponsorBlock segment detection
+    LaunchedEffect(video.id, isPlaying, isSponsorBlockEnabled, sponsorSkipBehavior, sponsorSegments) {
         while (true) {
-            delay(500)
+            delay(400)
             val vv = videoViewRef
             if (vv != null && vv.isPlaying) {
                 currentPositionMs = vv.currentPosition
                 if (vv.duration > 0) {
                     totalDurationMs = vv.duration
+                }
+                val currentSec = currentPositionMs / 1000
+                if (isSponsorBlockEnabled && sponsorSkipBehavior != SponsorSkipBehavior.DISABLED) {
+                    val matchingSeg = sponsorSegments.firstOrNull { seg ->
+                        currentSec in seg.startTimeSec until seg.endTimeSec
+                    }
+                    if (matchingSeg != null) {
+                        if (sponsorSkipBehavior == SponsorSkipBehavior.AUTO_SKIP && matchingSeg.id !in skippedSegmentIds) {
+                            skippedSegmentIds.add(matchingSeg.id)
+                            val targetMs = (matchingSeg.endTimeSec * 1000).coerceAtMost(totalDurationMs)
+                            vv.seekTo(targetMs)
+                            currentPositionMs = targetMs
+                            viewModel.recordSponsorSkip(matchingSeg)
+                            activeManualSkipSegment = null
+                        } else if (sponsorSkipBehavior == SponsorSkipBehavior.SHOW_SKIP_BUTTON) {
+                            activeManualSkipSegment = matchingSeg
+                        }
+                    } else {
+                        activeManualSkipSegment = null
+                    }
+                } else {
+                    activeManualSkipSegment = null
                 }
             }
         }
@@ -199,22 +239,34 @@ fun VideoWatchOverlay(
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f)
                 .background(Color.Black)
-                .pointerInput(video.id) {
+                .pointerInput(video.id, isScreenLocked, doubleTapSeekSeconds) {
                     detectTapGestures(
                         onTap = { showPlayerControls = !showPlayerControls },
+                        onLongPress = {
+                            if (!isScreenLocked) {
+                                isHolding2xSpeed = true
+                            }
+                        },
+                        onPress = {
+                            tryAwaitRelease()
+                            isHolding2xSpeed = false
+                        },
                         onDoubleTap = { offset ->
-                            val vv = videoViewRef
-                            if (offset.x < size.width / 2f) {
-                                val nextPos = ((vv?.currentPosition ?: currentPositionMs) - 10_000).coerceAtLeast(0)
-                                vv?.seekTo(nextPos)
-                                currentPositionMs = nextPos
-                                seekRippleText = "⏪ -10 seconds"
-                            } else {
-                                val nextPos = ((vv?.currentPosition ?: currentPositionMs) + 10_000)
-                                    .coerceAtMost(totalDurationMs)
-                                vv?.seekTo(nextPos)
-                                currentPositionMs = nextPos
-                                seekRippleText = "⏩ +10 seconds"
+                            if (!isScreenLocked) {
+                                val vv = videoViewRef
+                                val deltaMs = doubleTapSeekSeconds * 1000
+                                if (offset.x < size.width / 2f) {
+                                    val nextPos = ((vv?.currentPosition ?: currentPositionMs) - deltaMs).coerceAtLeast(0)
+                                    vv?.seekTo(nextPos)
+                                    currentPositionMs = nextPos
+                                    seekRippleText = "⏪ -${doubleTapSeekSeconds} seconds"
+                                } else {
+                                    val nextPos = ((vv?.currentPosition ?: currentPositionMs) + deltaMs)
+                                        .coerceAtMost(totalDurationMs)
+                                    vv?.seekTo(nextPos)
+                                    currentPositionMs = nextPos
+                                    seekRippleText = "⏩ +${doubleTapSeekSeconds} seconds"
+                                }
                             }
                         }
                     )
@@ -234,6 +286,7 @@ fun VideoWatchOverlay(
                         setVideoURI(Uri.parse(video.videoUrl))
                         setOnPreparedListener { mp ->
                             totalDurationMs = mp.duration.coerceAtLeast(video.durationSeconds * 1000)
+                            mp.isLooping = isLoopVideo
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                                 runCatching {
                                     mp.playbackParams = mp.playbackParams.setSpeed(playbackSpeed)
@@ -242,7 +295,13 @@ fun VideoWatchOverlay(
                             if (isPlaying) start()
                         }
                         setOnCompletionListener {
-                            if (isAutoplayEnabled && upNextVideos.isNotEmpty()) {
+                            if (isLoopVideo) {
+                                start()
+                            } else if (watchQueueVideos.isNotEmpty()) {
+                                val nextQueued = watchQueueVideos.first()
+                                viewModel.removeFromQueue(nextQueued.id)
+                                viewModel.openVideo(nextQueued)
+                            } else if (isAutoplayEnabled && upNextVideos.isNotEmpty()) {
                                 viewModel.openVideo(upNextVideos.first())
                             } else {
                                 viewModel.setPlaying(false)
@@ -261,6 +320,73 @@ fun VideoWatchOverlay(
                 },
                 modifier = Modifier.fillMaxSize()
             )
+
+            // Hold-to-2x Speed Pill at Top Center (Exact YouTube Gesture Feedback)
+            if (isHolding2xSpeed) {
+                Surface(
+                    color = Color.Black.copy(alpha = 0.78f),
+                    shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "2x",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Filled.FastForward,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+
+            // Stats for Nerds Technical Overlay
+            if (isStatsForNerds) {
+                Surface(
+                    color = Color.Black.copy(alpha = 0.82f),
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(10.dp)
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Stats for nerds",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(
+                                text = "✕",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                modifier = Modifier.clickable { viewModel.toggleStatsForNerds() }
+                            )
+                        }
+                        Text("Video ID / sCPN: ${video.id} / YT98K-4F2A", color = Color.LightGray, fontSize = 10.sp)
+                        Text("Viewport / Frames: 1920x1080*2.75 / 0 dropped of ${(currentPositionMs / 16).coerceAtLeast(60)}", color = Color.LightGray, fontSize = 10.sp)
+                        Text("Current / Optimal Res: $videoQuality / $videoQuality", color = Color.LightGray, fontSize = 10.sp)
+                        Text("Codecs: vp09.00.51.08.01 (315) / mp4a.40.2 (140)", color = Color.LightGray, fontSize = 10.sp)
+                        Text("Network Activity: 18,420 Kbps • Buffer Health: 24.5 s", color = Color(0xFF4CAF50), fontSize = 10.sp)
+                    }
+                }
+            }
 
             // Captions Overlay
             if (isCaptionsEnabled) {
@@ -293,6 +419,52 @@ fun VideoWatchOverlay(
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                     )
+                }
+            }
+
+            // Manual SponsorBlock Skip Button (when in Show Skip Button mode)
+            activeManualSkipSegment?.let { seg ->
+                val cat = SponsorCategory.fromKey(seg.category)
+                Surface(
+                    color = Color.Black.copy(alpha = 0.85f),
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 14.dp, bottom = 52.dp)
+                        .clickable {
+                            val targetMs = (seg.endTimeSec * 1000).coerceAtMost(totalDurationMs)
+                            videoViewRef?.seekTo(targetMs)
+                            currentPositionMs = targetMs
+                            viewModel.recordSponsorSkip(seg)
+                            activeManualSkipSegment = null
+                        }
+                        .testTag("manual_sponsor_skip_button")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .clip(CircleShape)
+                                .background(Color(cat.colorHex))
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Skip ${cat.displayName}",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Filled.SkipNext,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
             }
 
@@ -438,23 +610,56 @@ fun VideoWatchOverlay(
                                 fontSize = 11.sp
                             )
                         }
-                        Slider(
-                            value = if (totalDurationMs > 0) {
-                                (currentPositionMs.toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f)
-                            } else 0f,
-                            onValueChange = { newFraction ->
-                                val targetMs = (newFraction * totalDurationMs).toInt()
-                                currentPositionMs = targetMs
-                                videoViewRef?.seekTo(targetMs)
-                                viewModel.updateWatchProgress(video, newFraction)
-                            },
-                            colors = SliderDefaults.colors(
-                                thumbColor = YouTubeRed,
-                                activeTrackColor = YouTubeRed,
-                                inactiveTrackColor = Color.White.copy(alpha = 0.35f)
-                            ),
-                            modifier = Modifier.height(22.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(22.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Slider(
+                                value = if (totalDurationMs > 0) {
+                                    (currentPositionMs.toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f)
+                                } else 0f,
+                                onValueChange = { newFraction ->
+                                    val targetMs = (newFraction * totalDurationMs).toInt()
+                                    currentPositionMs = targetMs
+                                    videoViewRef?.seekTo(targetMs)
+                                    viewModel.updateWatchProgress(video, newFraction)
+                                },
+                                colors = SliderDefaults.colors(
+                                    thumbColor = YouTubeRed,
+                                    activeTrackColor = YouTubeRed,
+                                    inactiveTrackColor = Color.White.copy(alpha = 0.35f)
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            // SponsorBlock Color-Coded Segment Bar Overlay
+                            if (isSponsorBlockEnabled && sponsorSegments.isNotEmpty() && totalDurationMs > 0) {
+                                val totalSec = (totalDurationMs / 1000f).coerceAtLeast(1f)
+                                BoxWithConstraints(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 10.dp)
+                                        .height(4.dp)
+                                        .align(Alignment.Center)
+                                ) {
+                                    val barWidth = maxWidth
+                                    sponsorSegments.forEach { seg ->
+                                        val startFrac = (seg.startTimeSec / totalSec).coerceIn(0f, 1f)
+                                        val endFrac = (seg.endTimeSec / totalSec).coerceIn(startFrac, 1f)
+                                        val widthFrac = (endFrac - startFrac).coerceAtLeast(0.02f)
+                                        val catColor = Color(SponsorCategory.fromKey(seg.category).colorHex)
+                                        Box(
+                                            modifier = Modifier
+                                                .offset(x = barWidth * startFrac)
+                                                .width(barWidth * widthFrac)
+                                                .fillMaxHeight()
+                                                .background(catColor)
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -619,7 +824,8 @@ fun VideoWatchOverlay(
                                     modifier = Modifier.height(20.dp),
                                     color = MaterialTheme.colorScheme.outline
                                 )
-                                Box(
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier
                                         .clickable { viewModel.toggleDislike(video) }
                                         .padding(horizontal = 12.dp, vertical = 6.dp)
@@ -628,11 +834,30 @@ fun VideoWatchOverlay(
                                     Icon(
                                         imageVector = if (video.isDisliked) Icons.Filled.ThumbDown else Icons.Outlined.ThumbDown,
                                         contentDescription = "Dislike",
-                                        modifier = Modifier.size(18.dp)
+                                        modifier = Modifier.size(18.dp),
+                                        tint = if (video.isDisliked) YouTubeRed else MaterialTheme.colorScheme.onBackground
                                     )
+                                    if (isReturnDislikeEnabled) {
+                                        Spacer(modifier = Modifier.width(5.dp))
+                                        val effectiveDislikes = video.dislikesCount.coerceAtLeast(video.likesCount / 38) + (if (video.isDisliked) 1 else 0)
+                                        Text(
+                                            text = formatCompactCount(effectiveDislikes),
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
                                 }
                             }
                         }
+                    }
+
+                    // SponsorBlock Submit Segment Pill
+                    item {
+                        WatchActionPill(
+                            icon = Icons.Outlined.Shield,
+                            label = "SponsorBlock (${sponsorSegments.size})",
+                            onClick = { showSubmitSponsorSheet = true }
+                        )
                     }
 
                     // Share Pill
@@ -688,6 +913,87 @@ fun VideoWatchOverlay(
                             onClick = { viewModel.showSnackbar("15s Clip saved to your library!") }
                         )
                     }
+
+                    // Super Thanks Pill
+                    item {
+                        WatchActionPill(
+                            icon = Icons.Outlined.VolunteerActivism,
+                            label = "Thanks",
+                            onClick = { showThanksSheet = true }
+                        )
+                    }
+
+                    // Live Chat Pill (for Live streams)
+                    if (video.isLive) {
+                        item {
+                            WatchActionPill(
+                                icon = Icons.Outlined.Chat,
+                                label = if (showLiveChat) "Hide chat" else "Live chat",
+                                onClick = { showLiveChat = !showLiveChat }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Active Watch Queue Banner (if items are queued)
+            if (watchQueueVideos.isNotEmpty()) {
+                item {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 4.dp)
+                            .clickable { showQueueSheet = true }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                Icon(
+                                    imageVector = Icons.Outlined.QueueMusic,
+                                    contentDescription = null,
+                                    tint = YouTubeRed
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "Next in Queue (${watchQueueVideos.size})",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = watchQueueVideos.first().title,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "View",
+                                color = MaterialTheme.colorScheme.tertiary,
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Live Chat Stream Box (when watching a LIVE stream)
+            if (video.isLive && showLiveChat) {
+                item {
+                    LiveChatStreamSection(
+                        channelName = video.channelName,
+                        onSendChatMessage = { msg ->
+                            viewModel.addComment(video.id, "[LIVE CHAT] $msg")
+                        }
+                    )
                 }
             }
 
@@ -804,8 +1110,283 @@ fun VideoWatchOverlay(
                     },
                     onSaveToWatchLater = { viewModel.toggleWatchLater(nextVideo) },
                     onSaveToPlaylist = { viewModel.openSaveToPlaylistDialog(nextVideo.id) },
-                    onDownloadVideo = { viewModel.toggleDownload(nextVideo) }
+                    onDownloadVideo = { viewModel.toggleDownload(nextVideo) },
+                    onPlayNextInQueue = { viewModel.playNextInQueue(nextVideo) },
+                    onNotInterested = { viewModel.markNotInterested(nextVideo.id) }
                 )
+            }
+        }
+    }
+
+    // Super Thanks Bottom Sheet
+    if (showThanksSheet) {
+        var selectedAmount by remember { mutableStateOf("$5.00") }
+        var thanksMessage by remember { mutableStateOf("Awesome video! Keep up the great work 🎉") }
+        ModalBottomSheet(
+            onDismissRequest = { showThanksSheet = false },
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Text(
+                    text = "Say Thanks to ${video.channelName}",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Buy a Super Thanks to directly support ${video.channelName} and stand out in the comments with a highlighted colorful badge.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(listOf("$2.00", "$5.00", "$10.00", "$50.00")) { amt ->
+                        FilterChip(
+                            selected = selectedAmount == amt,
+                            onClick = { selectedAmount = amt },
+                            label = { Text(amt, fontWeight = FontWeight.Bold) }
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = thanksMessage,
+                    onValueChange = { thanksMessage = it },
+                    label = { Text("Your highlighted Super Thanks comment") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = {
+                        viewModel.addComment(video.id, "💖 [Super Thanks $selectedAmount • Unlocked Free] $thanksMessage")
+                        showThanksSheet = false
+                        viewModel.showSnackbar("Super Thanks ($selectedAmount) sent for FREE with UTube Unlocked!")
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = YouTubeRed),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Send Free Super Thanks ($selectedAmount — $0.00)", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+                Spacer(modifier = Modifier.height(24.dp))
+            }
+        }
+    }
+
+    // SponsorBlock Segments & Community Submission Sheet
+    if (showSubmitSponsorSheet) {
+        var selectedCat by remember { mutableStateOf(SponsorCategory.SPONSOR) }
+        var startSecInput by remember { mutableStateOf((currentPositionMs / 1000).toString()) }
+        var endSecInput by remember { mutableStateOf(((currentPositionMs / 1000) + 5).toString()) }
+
+        ModalBottomSheet(
+            onDismissRequest = { showSubmitSponsorSheet = false },
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Filled.Shield,
+                            contentDescription = null,
+                            tint = Color(0xFF00D400)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "SponsorBlock Segments",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Switch(
+                        checked = isSponsorBlockEnabled,
+                        onCheckedChange = { viewModel.toggleSponsorBlock() }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Active segments in this video (Tap any segment to skip past it immediately):",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                sponsorSegments.forEach { seg ->
+                    val cat = SponsorCategory.fromKey(seg.category)
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 3.dp)
+                            .clickable {
+                                val targetMs = (seg.endTimeSec * 1000).coerceAtMost(totalDurationMs)
+                                videoViewRef?.seekTo(targetMs)
+                                currentPositionMs = targetMs
+                                viewModel.recordSponsorSkip(seg)
+                                showSubmitSponsorSheet = false
+                            }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(12.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(cat.colorHex))
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(cat.displayName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        "${formatDuration(seg.startTimeSec)} – ${formatDuration(seg.endTimeSec)} • ${seg.votes} votes",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "Skip >",
+                                color = Color(0xFF00D400),
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "Submit New Segment to SponsorBlock Cloud",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(SponsorCategory.entries) { cat ->
+                        FilterChip(
+                            selected = selectedCat == cat,
+                            onClick = { selectedCat = cat },
+                            label = { Text(cat.displayName) }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = startSecInput,
+                        onValueChange = { startSecInput = it.filter { ch -> ch.isDigit() } },
+                        label = { Text("Start (sec)") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = endSecInput,
+                        onValueChange = { endSecInput = it.filter { ch -> ch.isDigit() } },
+                        label = { Text("End (sec)") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = {
+                        val s = startSecInput.toIntOrNull() ?: 0
+                        val e = (endSecInput.toIntOrNull() ?: (s + 5)).coerceAtLeast(s + 1)
+                        viewModel.submitSponsorSegment(video.id, selectedCat.key, s, e)
+                        showSubmitSponsorSheet = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00D400)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Submit Segment to Cloud", color = Color.Black, fontWeight = FontWeight.Bold)
+                }
+                Spacer(modifier = Modifier.height(24.dp))
+            }
+        }
+    }
+
+    // Watch Queue Bottom Sheet
+    if (showQueueSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showQueueSheet = false },
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Queue (${watchQueueVideos.size} videos)",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    TextButton(onClick = {
+                        viewModel.clearQueue()
+                        showQueueSheet = false
+                    }) {
+                        Text("Clear")
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(bottom = 28.dp)
+                ) {
+                    items(watchQueueVideos, key = { it.id }) { queuedVid ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    viewModel.removeFromQueue(queuedVid.id)
+                                    showQueueSheet = false
+                                    viewModel.openVideo(queuedVid)
+                                },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                CompactVideoRow(
+                                    video = queuedVid,
+                                    onClick = {
+                                        viewModel.removeFromQueue(queuedVid.id)
+                                        showQueueSheet = false
+                                        viewModel.openVideo(queuedVid)
+                                    }
+                                )
+                            }
+                            IconButton(onClick = { viewModel.removeFromQueue(queuedVid.id) }) {
+                                Icon(Icons.Outlined.Close, contentDescription = "Remove from queue")
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -962,12 +1543,18 @@ fun VideoWatchOverlay(
                 )
                 Spacer(modifier = Modifier.height(12.dp))
 
-                Text("Quality", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text("Quality (100% Unlocked Free)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.padding(vertical = 8.dp)
                 ) {
-                    val qualities = listOf("Auto (1080p)", "1080p60 Premium", "720p60", "480p", "360p")
+                    val qualities = listOf(
+                        "4K60 HDR (Unlocked Free)",
+                        "1080p60 Enhanced Bitrate (Free)",
+                        "1080p60",
+                        "720p60",
+                        "480p"
+                    )
                     items(qualities) { q ->
                         FilterChip(
                             selected = videoQuality == q,
@@ -1032,7 +1619,171 @@ fun VideoWatchOverlay(
                         onCheckedChange = { viewModel.toggleCaptions() }
                     )
                 }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Loop video", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Repeat this video continuously",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = isLoopVideo,
+                        onCheckedChange = { viewModel.toggleLoopVideo() }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Stable volume", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Balances range between quiet and loud audio",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = isStableVolume,
+                        onCheckedChange = { viewModel.toggleStableVolume() }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("Sleep timer", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(vertical = 6.dp)
+                ) {
+                    items(listOf(0 to "Off", 15 to "15 min", 30 to "30 min", 60 to "60 min")) { (mins, label) ->
+                        FilterChip(
+                            selected = sleepTimerMinutes == mins,
+                            onClick = { viewModel.setSleepTimer(mins) },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Stats for nerds", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Display codec, bitrate, and viewport telemetry",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = isStatsForNerds,
+                        onCheckedChange = { viewModel.toggleStatsForNerds() }
+                    )
+                }
                 Spacer(modifier = Modifier.height(28.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun LiveChatStreamSection(
+    channelName: String,
+    onSendChatMessage: (String) -> Unit
+) {
+    var chatInput by remember { mutableStateOf("") }
+    val liveMessages = remember {
+        mutableStateListOf(
+            "Alex_RTX" to "That analog sub-bass filter sweep is unreal 🔥",
+            "SynthRider99" to "Listening from Tokyo at 4AM while writing Kotlin!",
+            "ElenaVance" to "Can we get a closeup of the Prophet-6 patch bay?",
+            "Kaelen_VFX" to "Audio quality on this stream is crystal clear 10/10"
+        )
+    }
+
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 6.dp)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(YouTubeRed)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Live chat • Top messages",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Text(
+                    text = "4.2K watching",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            liveMessages.takeLast(5).forEach { (user, msg) ->
+                Row(modifier = Modifier.padding(vertical = 2.dp)) {
+                    Text(
+                        text = "$user: ",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.tertiary
+                    )
+                    Text(
+                        text = msg,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = chatInput,
+                    onValueChange = { chatInput = it },
+                    placeholder = { Text("Chat publicly as Christian Studio...") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick = {
+                        if (chatInput.isNotBlank()) {
+                            liveMessages.add("Christian Studio" to chatInput.trim())
+                            onSendChatMessage(chatInput.trim())
+                            chatInput = ""
+                        }
+                    }
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send live chat")
+                }
             }
         }
     }

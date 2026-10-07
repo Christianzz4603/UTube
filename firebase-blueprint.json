@@ -1,0 +1,137 @@
+{
+  "entities": {
+    "UserWatchHistory": {
+      "title": "UserWatchHistory",
+      "description": "Synced YouTube video watch history and playback state for the signed-in Google account.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The UID of the authenticated Google user."
+        },
+        "videoId": {
+          "type": "string",
+          "description": "The ID of the watched video."
+        },
+        "title": {
+          "type": "string",
+          "description": "The title of the watched video."
+        },
+        "channelName": {
+          "type": "string",
+          "description": "The channel name of the watched video."
+        },
+        "thumbnailResName": {
+          "type": "string",
+          "description": "Drawable or URL identifier for the video thumbnail."
+        },
+        "durationSeconds": {
+          "type": "integer",
+          "description": "Video duration in seconds."
+        },
+        "progressFraction": {
+          "type": "number",
+          "description": "Playback progress fraction from 0.0 to 1.0."
+        },
+        "isLiked": {
+          "type": "boolean",
+          "description": "Whether the user liked this video."
+        },
+        "isSavedToWatchLater": {
+          "type": "boolean",
+          "description": "Whether the video is saved to Watch Later."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when first watched (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when last watched (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "videoId",
+        "title",
+        "channelName",
+        "thumbnailResName",
+        "durationSeconds",
+        "progressFraction",
+        "isLiked",
+        "isSavedToWatchLater",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SponsorSegment": {
+      "title": "SponsorSegment",
+      "description": "Crowdsourced SponsorBlock segment for skipping sponsors, intros, outros, and self-promotions.",
+      "type": "object",
+      "properties": {
+        "videoId": {
+          "type": "string",
+          "description": "The ID of the video this segment belongs to."
+        },
+        "submittedByUid": {
+          "type": "string",
+          "description": "The UID of the user who submitted this segment."
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "Sponsor",
+            "Intro",
+            "Outro",
+            "SelfPromo",
+            "Interaction",
+            "MusicOfftopic"
+          ],
+          "description": "SponsorBlock segment category."
+        },
+        "startTimeSec": {
+          "type": "integer",
+          "description": "Start timestamp in seconds."
+        },
+        "endTimeSec": {
+          "type": "integer",
+          "description": "End timestamp in seconds."
+        },
+        "votes": {
+          "type": "integer",
+          "description": "Community upvote count."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when submitted (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "videoId",
+        "submittedByUid",
+        "category",
+        "startTimeSec",
+        "endTimeSec",
+        "votes",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/user_watch_history/{historyId}": {
+      "schema": {
+        "$ref": "#/entities/UserWatchHistory"
+      },
+      "description": "Per-user synced watch history and video states."
+    },
+    "/sponsor_segments/{segmentId}": {
+      "schema": {
+        "$ref": "#/entities/SponsorSegment"
+      },
+      "description": "Crowdsourced SponsorBlock segments for videos."
+    }
+  }
+}

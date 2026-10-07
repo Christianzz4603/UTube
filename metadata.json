@@ -1,6 +1,6 @@
 {
-  "name": "YouTube",
-  "description": "Full-featured YouTube video streaming experience with real video playback, Shorts vertical feed, Subscriptions, Community posts, Comments, Playlists, Watch History, and Creator Studio.",
+  "name": "UTube",
+  "description": "100% Free & Unlocked YouTube client with Google Account login, synced Watch History & Likes, built-in SponsorBlock auto-skipping, Return Dislike counts, and unlocked 4K60/Background/PiP playback.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

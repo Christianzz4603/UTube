@@ -159,13 +159,27 @@ fun YouTubeTopBar(
                 }
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "YouTube",
+                    text = "UTube",
                     fontFamily = OswaldFontFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 22.sp,
                     letterSpacing = (-0.6).sp,
                     color = MaterialTheme.colorScheme.onBackground
                 )
+                Spacer(modifier = Modifier.width(6.dp))
+                Surface(
+                    color = Color(0xFF00D400).copy(alpha = 0.18f),
+                    shape = RoundedCornerShape(4.dp),
+                    modifier = Modifier.border(0.8.dp, Color(0xFF00D400), RoundedCornerShape(4.dp))
+                ) {
+                    Text(
+                        text = "FREE",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF00D400),
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                    )
+                }
                 if (isIncognito) {
                     Spacer(modifier = Modifier.width(6.dp))
                     Surface(
@@ -299,6 +313,7 @@ fun CategoryFilterChipsRow(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun YouTubeVideoCard(
     video: VideoEntity,
@@ -307,16 +322,20 @@ fun YouTubeVideoCard(
     onSaveToWatchLater: () -> Unit,
     onSaveToPlaylist: () -> Unit,
     onDownloadVideo: () -> Unit,
+    onPlayNextInQueue: (() -> Unit)? = null,
+    onNotInterested: (() -> Unit)? = null,
+    showInlineMutedBadge: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var showOverflowMenu by remember { mutableStateOf(false) }
+    var showOverflowSheet by remember { mutableStateOf(false) }
+    var isInlinePreviewMuted by remember { mutableStateOf(true) }
 
     Column(
         modifier = modifier
             .fillMaxWidth()
             .clickable { onVideoClick() }
-            .padding(bottom = 16.dp)
+            .padding(bottom = 18.dp)
             .testTag("video_card_${video.id}")
     ) {
         // 16:9 Thumbnail Container
@@ -335,14 +354,43 @@ fun YouTubeVideoCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
+                    .height(52.dp)
                     .align(Alignment.BottomCenter)
                     .background(
                         Brush.verticalGradient(
-                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.65f))
+                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.7f))
                         )
                     )
             )
+
+            // Top-right Inline Muted Autoplay Controls (Volume + CC) like real YouTube Home feed
+            if (showInlineMutedBadge) {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.Black.copy(alpha = 0.65f))
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isInlinePreviewMuted) Icons.Outlined.VolumeOff else Icons.Outlined.VolumeUp,
+                        contentDescription = "Toggle inline audio",
+                        tint = Color.White,
+                        modifier = Modifier
+                            .size(16.dp)
+                            .clickable { isInlinePreviewMuted = !isInlinePreviewMuted }
+                    )
+                    Icon(
+                        imageVector = Icons.Outlined.ClosedCaption,
+                        contentDescription = "Inline Captions",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
 
             // Duration or LIVE badge
             Surface(
@@ -416,7 +464,21 @@ fun YouTubeVideoCard(
                 Spacer(modifier = Modifier.height(3.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "${video.channelName} • ${formatCompactCount(video.viewsCount)} views • ${video.publishedTimeText}",
+                        text = video.channelName,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Filled.CheckCircle,
+                        contentDescription = "Verified Channel",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Text(
+                        text = " • ${formatCompactCount(video.viewsCount)} views • ${video.publishedTimeText}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -425,66 +487,125 @@ fun YouTubeVideoCard(
                 }
             }
 
-            Box {
-                IconButton(
-                    onClick = { showOverflowMenu = true },
-                    modifier = Modifier.testTag("video_menu_${video.id}")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.MoreVert,
-                        contentDescription = "More options",
-                        tint = MaterialTheme.colorScheme.onBackground
+            IconButton(
+                onClick = { showOverflowSheet = true },
+                modifier = Modifier.testTag("video_menu_${video.id}")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.MoreVert,
+                    contentDescription = "More options",
+                    tint = MaterialTheme.colorScheme.onBackground
+                )
+            }
+        }
+    }
+
+    // Authentic YouTube Modal Bottom Sheet for Video 3-Dot Menu
+    if (showOverflowSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showOverflowSheet = false },
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 24.dp)
+            ) {
+                if (onPlayNextInQueue != null) {
+                    SheetActionItem(
+                        icon = Icons.Outlined.QueuePlayNext,
+                        label = "Play next in queue",
+                        onClick = {
+                            showOverflowSheet = false
+                            onPlayNextInQueue()
+                        }
                     )
                 }
-
-                DropdownMenu(
-                    expanded = showOverflowMenu,
-                    onDismissRequest = { showOverflowMenu = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text(if (video.isSavedToWatchLater) "Remove from Watch Later" else "Save to Watch Later") },
-                        leadingIcon = { Icon(Icons.Outlined.Schedule, contentDescription = null) },
+                SheetActionItem(
+                    icon = Icons.Outlined.Schedule,
+                    label = if (video.isSavedToWatchLater) "Remove from Watch Later" else "Save to Watch Later",
+                    onClick = {
+                        showOverflowSheet = false
+                        onSaveToWatchLater()
+                    }
+                )
+                SheetActionItem(
+                    icon = Icons.Outlined.BookmarkBorder,
+                    label = "Save to playlist",
+                    onClick = {
+                        showOverflowSheet = false
+                        onSaveToPlaylist()
+                    }
+                )
+                SheetActionItem(
+                    icon = if (video.isDownloaded) Icons.Filled.DownloadDone else Icons.Outlined.Download,
+                    label = if (video.isDownloaded) "Remove from Downloads" else "Download video",
+                    onClick = {
+                        showOverflowSheet = false
+                        onDownloadVideo()
+                    }
+                )
+                SheetActionItem(
+                    icon = Icons.Outlined.Share,
+                    label = "Share",
+                    onClick = {
+                        showOverflowSheet = false
+                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, "Watch \"${video.title}\" on YouTube: ${video.videoUrl}")
+                        }
+                        context.startActivity(Intent.createChooser(sendIntent, "Share video"))
+                    }
+                )
+                if (onNotInterested != null) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    SheetActionItem(
+                        icon = Icons.Outlined.Block,
+                        label = "Not interested",
                         onClick = {
-                            showOverflowMenu = false
-                            onSaveToWatchLater()
+                            showOverflowSheet = false
+                            onNotInterested()
                         }
                     )
-                    DropdownMenuItem(
-                        text = { Text("Save to playlist") },
-                        leadingIcon = { Icon(Icons.Outlined.PlaylistAdd, contentDescription = null) },
+                    SheetActionItem(
+                        icon = Icons.Outlined.RemoveCircleOutline,
+                        label = "Don't recommend channel",
                         onClick = {
-                            showOverflowMenu = false
-                            onSaveToPlaylist()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text(if (video.isDownloaded) "Remove download" else "Download video") },
-                        leadingIcon = {
-                            Icon(
-                                if (video.isDownloaded) Icons.Filled.DownloadDone else Icons.Outlined.Download,
-                                contentDescription = null
-                            )
-                        },
-                        onClick = {
-                            showOverflowMenu = false
-                            onDownloadVideo()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Share") },
-                        leadingIcon = { Icon(Icons.Outlined.Share, contentDescription = null) },
-                        onClick = {
-                            showOverflowMenu = false
-                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_TEXT, "Watch \"${video.title}\" on YouTube: ${video.videoUrl}")
-                            }
-                            context.startActivity(Intent.createChooser(sendIntent, "Share video"))
+                            showOverflowSheet = false
+                            onNotInterested()
                         }
                     )
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SheetActionItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            modifier = Modifier.size(24.dp),
+            tint = MaterialTheme.colorScheme.onBackground
+        )
+        Spacer(modifier = Modifier.width(18.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onBackground
+        )
     }
 }
 

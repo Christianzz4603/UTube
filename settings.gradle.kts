@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "YouTube"
+rootProject.name = "UTube"
 
 include(":app")

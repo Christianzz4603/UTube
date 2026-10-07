@@ -1,11 +1,11 @@
 <resources>
-    <string name="app_name">YouTube</string>
+    <string name="app_name">UTube</string>
     <string name="nav_home">Home</string>
     <string name="nav_shorts">Shorts</string>
     <string name="nav_create">Create</string>
     <string name="nav_subscriptions">Subscriptions</string>
     <string name="nav_you">You</string>
-    <string name="search_hint">Search YouTube</string>
+    <string name="search_hint">Search UTube</string>
     <string name="subscribe">Subscribe</string>
     <string name="subscribed">Subscribed</string>
     <string name="comments_header">Comments</string>

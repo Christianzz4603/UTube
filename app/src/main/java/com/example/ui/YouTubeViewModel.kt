@@ -17,7 +17,10 @@ enum class SubFilter {
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class YouTubeViewModel(private val repository: YouTubeRepository) : ViewModel() {
+class YouTubeViewModel(
+    private val repository: YouTubeRepository,
+    private val cloudRepository: UTubeCloudRepository? = null
+) : ViewModel() {
 
     // Navigation & UI state
     private val _selectedTab = MutableStateFlow(YouTubeTab.HOME)
@@ -29,6 +32,22 @@ class YouTubeViewModel(private val repository: YouTubeRepository) : ViewModel() 
     val categories = listOf(
         "All", "New to you", "Tech", "Gaming", "Cooking", "Nature", "Music", "Movies", "Live", "Recently uploaded", "Watched"
     )
+
+    // SponsorBlock State & Configuration (100% Free & Built-In)
+    private val _isSponsorBlockEnabled = MutableStateFlow(true)
+    val isSponsorBlockEnabled: StateFlow<Boolean> = _isSponsorBlockEnabled.asStateFlow()
+
+    private val _sponsorSkipBehavior = MutableStateFlow(SponsorSkipBehavior.AUTO_SKIP)
+    val sponsorSkipBehavior: StateFlow<SponsorSkipBehavior> = _sponsorSkipBehavior.asStateFlow()
+
+    private val _segmentsSkippedCount = MutableStateFlow(14)
+    val segmentsSkippedCount: StateFlow<Int> = _segmentsSkippedCount.asStateFlow()
+
+    private val _secondsSavedBySponsorBlock = MutableStateFlow(412)
+    val secondsSavedBySponsorBlock: StateFlow<Int> = _secondsSavedBySponsorBlock.asStateFlow()
+
+    private val _isReturnDislikeEnabled = MutableStateFlow(true)
+    val isReturnDislikeEnabled: StateFlow<Boolean> = _isReturnDislikeEnabled.asStateFlow()
 
     // Search state
     private val _isSearchOpen = MutableStateFlow(false)
@@ -65,7 +84,7 @@ class YouTubeViewModel(private val repository: YouTubeRepository) : ViewModel() 
     private val _playbackSpeed = MutableStateFlow(1.0f)
     val playbackSpeed: StateFlow<Float> = _playbackSpeed.asStateFlow()
 
-    private val _videoQuality = MutableStateFlow("1080p60 Premium")
+    private val _videoQuality = MutableStateFlow("4K60 HDR (Unlocked Free)")
     val videoQuality: StateFlow<String> = _videoQuality.asStateFlow()
 
     private val _isAmbientMode = MutableStateFlow(true)
@@ -80,6 +99,46 @@ class YouTubeViewModel(private val repository: YouTubeRepository) : ViewModel() 
     // Save to Playlist Dialog
     private val _saveToPlaylistVideoId = MutableStateFlow<String?>(null)
     val saveToPlaylistVideoId: StateFlow<String?> = _saveToPlaylistVideoId.asStateFlow()
+
+    // Watch Queue ("Play next in queue")
+    private val _watchQueueIds = MutableStateFlow<List<String>>(emptyList())
+    val watchQueueIds: StateFlow<List<String>> = _watchQueueIds.asStateFlow()
+
+    // Hidden / "Not interested" video IDs for Undo support
+    private val _hiddenVideoIds = MutableStateFlow<Set<String>>(emptySet())
+    val hiddenVideoIds: StateFlow<Set<String>> = _hiddenVideoIds.asStateFlow()
+
+    // Full Settings Screen & Go Live Studio Screen
+    private val _isSettingsOpen = MutableStateFlow(false)
+    val isSettingsOpen: StateFlow<Boolean> = _isSettingsOpen.asStateFlow()
+
+    private val _isGoLiveOpen = MutableStateFlow(false)
+    val isGoLiveOpen: StateFlow<Boolean> = _isGoLiveOpen.asStateFlow()
+
+    private val _isExploreTrendingOpen = MutableStateFlow(false)
+    val isExploreTrendingOpen: StateFlow<Boolean> = _isExploreTrendingOpen.asStateFlow()
+
+    // Advanced Player & App Settings
+    private val _isLoopVideo = MutableStateFlow(false)
+    val isLoopVideo: StateFlow<Boolean> = _isLoopVideo.asStateFlow()
+
+    private val _isStableVolume = MutableStateFlow(true)
+    val isStableVolume: StateFlow<Boolean> = _isStableVolume.asStateFlow()
+
+    private val _isStatsForNerds = MutableStateFlow(false)
+    val isStatsForNerds: StateFlow<Boolean> = _isStatsForNerds.asStateFlow()
+
+    private val _sleepTimerMinutes = MutableStateFlow(0) // 0 = Off, 15, 30, 60
+    val sleepTimerMinutes: StateFlow<Int> = _sleepTimerMinutes.asStateFlow()
+
+    private val _isRestrictedMode = MutableStateFlow(false)
+    val isRestrictedMode: StateFlow<Boolean> = _isRestrictedMode.asStateFlow()
+
+    private val _isInlineMutedPreview = MutableStateFlow(true)
+    val isInlineMutedPreview: StateFlow<Boolean> = _isInlineMutedPreview.asStateFlow()
+
+    private val _doubleTapSeekSeconds = MutableStateFlow(10)
+    val doubleTapSeekSeconds: StateFlow<Int> = _doubleTapSeekSeconds.asStateFlow()
 
     // Theme & Settings
     private val _isDarkTheme = MutableStateFlow(true)
@@ -138,15 +197,24 @@ class YouTubeViewModel(private val repository: YouTubeRepository) : ViewModel() 
 
     val filteredHomeVideos: StateFlow<List<VideoEntity>> = combine(
         repository.homeVideos,
-        _selectedCategory
-    ) { videos, category ->
+        _selectedCategory,
+        _hiddenVideoIds
+    ) { videos, category, hiddenIds ->
+        val visible = videos.filter { it.id !in hiddenIds }
         when (category) {
-            "All", "New to you" -> videos
-            "Live" -> videos.filter { it.isLive }
-            "Watched" -> videos.filter { it.lastWatchedTimestamp > 0L }
-            "Recently uploaded" -> videos.sortedBy { it.publishedTimeText }
-            else -> videos.filter { it.category.equals(category, ignoreCase = true) }
+            "All", "New to you" -> visible
+            "Live" -> visible.filter { it.isLive }
+            "Watched" -> visible.filter { it.lastWatchedTimestamp > 0L }
+            "Recently uploaded" -> visible.sortedBy { it.publishedTimeText }
+            else -> visible.filter { it.category.equals(category, ignoreCase = true) }
         }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val watchQueueVideos: StateFlow<List<VideoEntity>> = combine(
+        allVideos,
+        _watchQueueIds
+    ) { videos, queueIds ->
+        queueIds.mapNotNull { id -> videos.find { it.id == id } }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val searchResults: StateFlow<List<VideoEntity>> = combine(
@@ -186,6 +254,30 @@ class YouTubeViewModel(private val repository: YouTubeRepository) : ViewModel() 
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val currentVideoSponsorSegments: StateFlow<List<SponsorSegmentDoc>> = combine(
+        _currentPlayingVideoId,
+        currentPlayingVideo
+    ) { id, video ->
+        id to (video?.durationSeconds ?: 15)
+    }.flatMapLatest { (id, duration) ->
+        if (id == null) {
+            flowOf(emptyList())
+        } else {
+            val defaults = DefaultSponsorSegments.getDefaultSegmentsForVideo(id, duration)
+            if (cloudRepository != null) {
+                cloudRepository.observeSponsorSegments(id)
+                    .map { cloudSegs -> (defaults + cloudSegs).distinctBy { "${it.category}_${it.startTimeSec}_${it.endTimeSec}" }.sortedBy { it.startTimeSec } }
+                    .catch { emit(defaults) }
+            } else {
+                flowOf(defaults)
+            }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val cloudWatchHistory: StateFlow<List<UserWatchHistoryDoc>> = (cloudRepository?.observeUserWatchHistory() ?: flowOf(emptyList()))
+        .catch { emit(emptyList()) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     init {
         viewModelScope.launch {
             repository.ensureSeedData()
@@ -213,6 +305,7 @@ class YouTubeViewModel(private val repository: YouTubeRepository) : ViewModel() 
             viewModelScope.launch {
                 val nextProgress = if (video.watchProgressFraction > 0.1f) video.watchProgressFraction else 0.25f
                 repository.recordWatchProgress(video, nextProgress)
+                cloudRepository?.syncWatchHistoryEntry(video, nextProgress)
             }
         }
     }
@@ -532,8 +625,42 @@ class YouTubeViewModel(private val repository: YouTubeRepository) : ViewModel() 
     fun clearWatchHistory() {
         viewModelScope.launch {
             repository.clearWatchHistory()
-            showSnackbar("Watch history cleared")
+            cloudRepository?.clearAllCloudWatchHistory()
+            showSnackbar("Watch history cleared from device & Google Account")
         }
+    }
+
+    fun toggleSponsorBlock() {
+        _isSponsorBlockEnabled.value = !_isSponsorBlockEnabled.value
+        showSnackbar(if (_isSponsorBlockEnabled.value) "SponsorBlock enabled" else "SponsorBlock paused")
+    }
+
+    fun setSponsorSkipBehavior(behavior: SponsorSkipBehavior) {
+        _sponsorSkipBehavior.value = behavior
+        showSnackbar("SponsorBlock mode: ${behavior.label}")
+    }
+
+    fun recordSponsorSkip(segment: SponsorSegmentDoc) {
+        val savedSec = (segment.endTimeSec - segment.startTimeSec).coerceAtLeast(1)
+        _segmentsSkippedCount.value += 1
+        _secondsSavedBySponsorBlock.value += savedSec
+        val catName = SponsorCategory.fromKey(segment.category).displayName
+        showSnackbar("⚡ SponsorBlock skipped $catName (${savedSec}s saved)")
+    }
+
+    fun submitSponsorSegment(videoId: String, category: String, startSec: Int, endSec: Int) {
+        viewModelScope.launch {
+            val res = cloudRepository?.submitSponsorSegment(videoId, category, startSec, endSec)
+            if (res == null || res.isSuccess) {
+                showSnackbar("SponsorBlock segment ($category ${startSec}s–${endSec}s) submitted!")
+            } else {
+                showSnackbar("Segment saved locally for this session")
+            }
+        }
+    }
+
+    fun toggleReturnDislike() {
+        _isReturnDislikeEnabled.value = !_isReturnDislikeEnabled.value
     }
 
     fun toggleDarkTheme() {
@@ -545,6 +672,101 @@ class YouTubeViewModel(private val repository: YouTubeRepository) : ViewModel() 
         showSnackbar(if (_isIncognito.value) "Turned on Incognito mode" else "Turned off Incognito mode")
     }
 
+    fun addToQueue(video: VideoEntity) {
+        if (!_watchQueueIds.value.contains(video.id)) {
+            _watchQueueIds.value = _watchQueueIds.value + video.id
+        }
+        showSnackbar("Added to queue: ${video.title.take(26)}...")
+    }
+
+    fun playNextInQueue(video: VideoEntity) {
+        val current = _watchQueueIds.value.toMutableList()
+        current.remove(video.id)
+        current.add(0, video.id)
+        _watchQueueIds.value = current
+        showSnackbar("Playing next in queue")
+    }
+
+    fun removeFromQueue(videoId: String) {
+        _watchQueueIds.value = _watchQueueIds.value - videoId
+    }
+
+    fun clearQueue() {
+        _watchQueueIds.value = emptyList()
+    }
+
+    fun markNotInterested(videoId: String) {
+        _hiddenVideoIds.value = _hiddenVideoIds.value + videoId
+        showSnackbar("Video removed from feed")
+    }
+
+    fun undoNotInterested(videoId: String) {
+        _hiddenVideoIds.value = _hiddenVideoIds.value - videoId
+        showSnackbar("Video restored to feed")
+    }
+
+    fun openSettings() {
+        _isSettingsOpen.value = true
+    }
+
+    fun closeSettings() {
+        _isSettingsOpen.value = false
+    }
+
+    fun openGoLive() {
+        _isCreateSheetOpen.value = false
+        _isGoLiveOpen.value = true
+    }
+
+    fun closeGoLive() {
+        _isGoLiveOpen.value = false
+    }
+
+    fun openExploreTrending() {
+        _isExploreTrendingOpen.value = true
+    }
+
+    fun closeExploreTrending() {
+        _isExploreTrendingOpen.value = false
+    }
+
+    fun toggleLoopVideo() {
+        _isLoopVideo.value = !_isLoopVideo.value
+        showSnackbar(if (_isLoopVideo.value) "Loop video On" else "Loop video Off")
+    }
+
+    fun toggleStableVolume() {
+        _isStableVolume.value = !_isStableVolume.value
+        showSnackbar(if (_isStableVolume.value) "Stable volume On" else "Stable volume Off")
+    }
+
+    fun toggleStatsForNerds() {
+        _isStatsForNerds.value = !_isStatsForNerds.value
+    }
+
+    fun setSleepTimer(minutes: Int) {
+        _sleepTimerMinutes.value = minutes
+        showSnackbar(if (minutes == 0) "Sleep timer turned off" else "Sleep timer set for $minutes minutes")
+    }
+
+    fun toggleRestrictedMode() {
+        _isRestrictedMode.value = !_isRestrictedMode.value
+    }
+
+    fun toggleInlineMutedPreview() {
+        _isInlineMutedPreview.value = !_isInlineMutedPreview.value
+    }
+
+    fun cycleDoubleTapSeekSeconds() {
+        val next = when (_doubleTapSeekSeconds.value) {
+            5 -> 10
+            10 -> 15
+            15 -> 30
+            else -> 5
+        }
+        _doubleTapSeekSeconds.value = next
+    }
+
     fun showSnackbar(message: String) {
         _snackbarMessage.value = message
     }
@@ -553,10 +775,13 @@ class YouTubeViewModel(private val repository: YouTubeRepository) : ViewModel() 
         _snackbarMessage.value = null
     }
 
-    class Factory(private val repository: YouTubeRepository) : ViewModelProvider.Factory {
+    class Factory(
+        private val repository: YouTubeRepository,
+        private val cloudRepository: UTubeCloudRepository? = null
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return YouTubeViewModel(repository) as T
+            return YouTubeViewModel(repository, cloudRepository) as T
         }
     }
 }

@@ -456,6 +456,18 @@ fun CreateStudioBottomSheet(viewModel: YouTubeViewModel) {
                     onClick = { mode = "POST" },
                     label = { Text("Create post") }
                 )
+                AssistChip(
+                    onClick = { viewModel.openGoLive() },
+                    label = { Text("Go Live") },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.Sensors,
+                            contentDescription = null,
+                            tint = YouTubeRed,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                )
             }
 
             Spacer(modifier = Modifier.height(10.dp))

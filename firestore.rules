@@ -1,0 +1,114 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidUserWatchHistory(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.videoId is string && data.videoId.size() >= 1 && data.videoId.size() <= 100 &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 300 &&
+             data.channelName is string && data.channelName.size() >= 1 && data.channelName.size() <= 150 &&
+             data.thumbnailResName is string && data.thumbnailResName.size() <= 300 &&
+             data.durationSeconds is int && data.durationSeconds >= 0 && data.durationSeconds <= 86400 &&
+             (data.progressFraction is int || data.progressFraction is float) &&
+             data.progressFraction >= 0 && data.progressFraction <= 1 &&
+             data.isLiked is bool &&
+             data.isSavedToWatchLater is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidSponsorSegment(data) {
+      return data.videoId is string && data.videoId.size() >= 1 && data.videoId.size() <= 100 &&
+             data.submittedByUid is string && data.submittedByUid.size() >= 1 && data.submittedByUid.size() <= 128 &&
+             data.category is string &&
+             data.category in ['Sponsor', 'Intro', 'Outro', 'SelfPromo', 'Interaction', 'MusicOfftopic'] &&
+             data.startTimeSec is int && data.startTimeSec >= 0 && data.startTimeSec <= 86400 &&
+             data.endTimeSec is int && data.endTimeSec > data.startTimeSec && data.endTimeSec <= 86400 &&
+             data.votes is int && data.votes >= 0 &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    match /user_watch_history/{historyId} {
+      allow get: if isSignedIn() && isValidId(historyId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(historyId) &&
+                       incoming().keys().hasAll([
+                         'userId', 'videoId', 'title', 'channelName', 'thumbnailResName',
+                         'durationSeconds', 'progressFraction', 'isLiked', 'isSavedToWatchLater',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'videoId', 'title', 'channelName', 'thumbnailResName',
+                         'durationSeconds', 'progressFraction', 'isLiked', 'isSavedToWatchLater',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidUserWatchHistory(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(historyId) &&
+                       existing().userId == request.auth.uid &&
+                       incoming().userId == existing().userId &&
+                       incoming().videoId == existing().videoId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidUserWatchHistory(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'title', 'channelName', 'thumbnailResName', 'durationSeconds',
+                         'progressFraction', 'isLiked', 'isSavedToWatchLater', 'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && isValidId(historyId) && existing().userId == request.auth.uid;
+    }
+
+    match /sponsor_segments/{segmentId} {
+      allow get: if isSignedIn() && isValidId(segmentId) && existing().videoId.size() >= 1;
+      allow list: if isSignedIn() && existing().videoId.size() >= 1;
+
+      allow create: if isSignedIn() &&
+                       isValidId(segmentId) &&
+                       incoming().submittedByUid == request.auth.uid &&
+                       incoming().keys().hasAll([
+                         'videoId', 'submittedByUid', 'category',
+                         'startTimeSec', 'endTimeSec', 'votes', 'createdAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'videoId', 'submittedByUid', 'category',
+                         'startTimeSec', 'endTimeSec', 'votes', 'createdAt'
+                       ]) &&
+                       isValidSponsorSegment(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(segmentId) &&
+                       incoming().videoId == existing().videoId &&
+                       incoming().submittedByUid == existing().submittedByUid &&
+                       incoming().category == existing().category &&
+                       incoming().startTimeSec == existing().startTimeSec &&
+                       incoming().endTimeSec == existing().endTimeSec &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidSponsorSegment(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['votes']);
+
+      allow delete: if isSignedIn() && isValidId(segmentId) && existing().submittedByUid == request.auth.uid;
+    }
+  }
+}

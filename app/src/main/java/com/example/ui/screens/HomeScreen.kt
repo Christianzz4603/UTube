@@ -29,6 +29,7 @@ fun HomeScreen(
     val selectedCategory by viewModel.selectedCategory.collectAsState()
     val notifications by viewModel.notifications.collectAsState()
     val isIncognito by viewModel.isIncognito.collectAsState()
+    val isInlineMutedPreview by viewModel.isInlineMutedPreview.collectAsState()
 
     val unreadCount = notifications.count { !it.isRead }
 
@@ -50,7 +51,7 @@ fun HomeScreen(
             categories = viewModel.categories,
             selectedCategory = selectedCategory,
             onSelectCategory = { viewModel.selectCategory(it) },
-            onExploreShortsClick = { viewModel.selectTab(YouTubeTab.SHORTS) }
+            onExploreShortsClick = { viewModel.openExploreTrending() }
         )
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
@@ -101,7 +102,10 @@ fun HomeScreen(
                         onChannelClick = { viewModel.openChannelProfile(video.channelId) },
                         onSaveToWatchLater = { viewModel.toggleWatchLater(video) },
                         onSaveToPlaylist = { viewModel.openSaveToPlaylistDialog(video.id) },
-                        onDownloadVideo = { viewModel.toggleDownload(video) }
+                        onDownloadVideo = { viewModel.toggleDownload(video) },
+                        onPlayNextInQueue = { viewModel.playNextInQueue(video) },
+                        onNotInterested = { viewModel.markNotInterested(video.id) },
+                        showInlineMutedBadge = isInlineMutedPreview && index == 0
                     )
 
                     // Insert authentic Shorts Shelf after 2nd video when viewing "All" or "New to you"
