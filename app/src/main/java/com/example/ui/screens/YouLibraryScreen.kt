@@ -73,6 +73,7 @@ fun YouLibraryScreen(
     }
 
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
+    var showApkWorkflowSheet by remember { mutableStateOf(false) }
     var selectedLibrarySection by remember { mutableStateOf<String?>(null) } // "liked", "watch_later", "downloads", "your_videos"
     var selectedPlaylist by remember { mutableStateOf<PlaylistEntity?>(null) }
 
@@ -277,6 +278,21 @@ fun YouLibraryScreen(
                 }
                 item {
                     AssistChip(
+                        onClick = { showApkWorkflowSheet = true },
+                        label = { Text("Build & Export APK") },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Outlined.Android,
+                                contentDescription = null,
+                                tint = Color(0xFF00D400),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        modifier = Modifier.testTag("build_apk_workflow_chip")
+                    )
+                }
+                item {
+                    AssistChip(
                         onClick = { viewModel.openCreateSheet() },
                         label = { Text("UTube Studio Upload") },
                         leadingIcon = {
@@ -433,7 +449,21 @@ fun YouLibraryScreen(
                 subtitle = "${watchLaterVideos.size} videos",
                 onClick = { selectedLibrarySection = "watch_later" }
             )
+            LibraryRowMenuItem(
+                icon = Icons.Outlined.Android,
+                title = "Android APK Build Workflow",
+                subtitle = "Export APK via AI Studio, GitHub Actions (.github/workflows/build-apk.yml), or Gradle",
+                badgeIcon = Icons.Filled.Download,
+                onClick = { showApkWorkflowSheet = true }
+            )
         }
+    }
+
+    if (showApkWorkflowSheet) {
+        ApkWorkflowBottomSheet(
+            onDismiss = { showApkWorkflowSheet = false },
+            onShowSnackbar = { viewModel.showSnackbar(it) }
+        )
     }
 
     // Create Playlist Dialog
@@ -819,6 +849,155 @@ fun CompactVideoRow(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ApkWorkflowBottomSheet(
+    onDismiss: () -> Unit,
+    onShowSnackbar: (String) -> Unit
+) {
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Filled.Android,
+                    contentDescription = null,
+                    tint = Color(0xFF00D400),
+                    modifier = Modifier.size(28.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text(
+                        text = "UTube Android APK Build Workflow",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Package ID: com.aistudio.youtube.vstrxm • v1.0 Unlocked",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Option 1: AI Studio Direct APK Download
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text(
+                        text = "1. Direct Download in AI Studio (Fastest)",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = Color(0xFF00D400)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Open the Settings / Export menu in the top-right bar of Google AI Studio and select 'Download APK' (or 'Generate APK/AAB') to download the signed UTube APK directly to your phone or PC.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Option 2: GitHub Actions Automated CI/CD Workflow
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "2. GitHub Actions CI/CD Workflow (Included)",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
+                        TextButton(
+                            onClick = {
+                                clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(".github/workflows/build-apk.yml"))
+                                onShowSnackbar("Copied workflow path: .github/workflows/build-apk.yml")
+                            }
+                        ) {
+                            Text("Copy Path")
+                        }
+                    }
+                    Text(
+                        text = "File: .github/workflows/build-apk.yml\nPush to GitHub from AI Studio and GitHub Actions will automatically compile and upload 'UTube-v1.0-Unlocked-debug.apk' under the Actions -> Artifacts tab.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Option 3: Local / CLI Build Script
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "3. Command-Line APK Script (build-apk.sh)",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        TextButton(
+                            onClick = {
+                                clipboardManager.setText(androidx.compose.ui.text.AnnotatedString("bash build-apk.sh"))
+                                onShowSnackbar("Copied command: bash build-apk.sh")
+                            }
+                        ) {
+                            Text("Copy Cmd")
+                        }
+                    }
+                    Text(
+                        text = "Run 'bash build-apk.sh' or 'gradle :app:assembleDebug' to produce:\napp/build/outputs/apk/debug/app-debug.apk",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(containerColor = YouTubeRed),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Done", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }

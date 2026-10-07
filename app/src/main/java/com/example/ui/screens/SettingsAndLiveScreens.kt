@@ -58,6 +58,7 @@ fun YouTubeSettingsScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val credentialManager = remember { CredentialManager.create(context) }
+    var showApkWorkflowSheet by remember { mutableStateOf(false) }
 
     BackHandler { viewModel.closeSettings() }
 
@@ -291,6 +292,14 @@ fun YouTubeSettingsScreen(
                 }
                 item {
                     SettingsClickableRow(
+                        icon = Icons.Outlined.Android,
+                        title = "Android APK Build & Export Workflow",
+                        subtitle = ".github/workflows/build-apk.yml • build-apk.sh • AI Studio Export",
+                        onClick = { showApkWorkflowSheet = true }
+                    )
+                }
+                item {
+                    SettingsClickableRow(
                         icon = Icons.Outlined.Info,
                         title = "About UTube Unlocked",
                         subtitle = "100% Free Forever • SponsorBlock + Return Dislike + 4K60 HDR",
@@ -299,6 +308,13 @@ fun YouTubeSettingsScreen(
                 }
             }
         }
+    }
+
+    if (showApkWorkflowSheet) {
+        ApkWorkflowBottomSheet(
+            onDismiss = { showApkWorkflowSheet = false },
+            onShowSnackbar = { viewModel.showSnackbar(it) }
+        )
     }
 }
 
