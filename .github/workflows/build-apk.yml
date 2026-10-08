@@ -81,7 +81,7 @@ jobs:
 
       - name: Assemble Debug APK
         if: ${{ github.event.inputs.build_variant != 'release' }}
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+        run: gradle :app:assembleDebug -Pkotlin.compiler.execution.strategy=daemon --max-workers=1 --no-daemon --stacktrace
 
       - name: Assemble Release APK (if signing secrets configured)
         if: ${{ github.event.inputs.build_variant == 'release' || github.event.inputs.build_variant == 'both' }}
@@ -94,7 +94,7 @@ jobs:
             cp debug.keystore my-upload-key.jks
             keytool -changealias -keystore my-upload-key.jks -storepass android -alias androiddebugkey -destalias upload || true
           fi
-          gradle :app:assembleRelease --no-daemon --stacktrace
+          gradle :app:assembleRelease -Pkotlin.compiler.execution.strategy=daemon --max-workers=1 --no-daemon --stacktrace
 
       - name: Rename and Collect APK Artifacts
         run: |

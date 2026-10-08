@@ -38,7 +38,7 @@ import com.google.firebase.auth.auth
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun YouLibraryScreen(
-    viewModel: YouTubeViewModel,
+    viewModel: YouTube views Odel odel,
     onEnterCast: () -> Unit,
     onSignOut: () -> Unit = {}
 ) {
@@ -919,6 +919,125 @@ fun ApkWorkflowBottomSheet(
             Spacer(modifier = Modifier.height(10.dp))
 
             // Option 2: GitHub Actions Automated CI/CD Workflow
+            val workflowYamlContent = """
+name: Build UTube Android APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+    inputs:
+      build_variant:
+        description: "APK Build Variant (debug or release)"
+        required: false
+        default: "debug"
+        type: choice
+        options:
+          - debug
+          - release
+          - both
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Assemble UTube APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: "temurin"
+          java-version: "21"
+
+      - name: Configure Android SDK & Accept Licenses
+        run: |
+          SDK_ROOT="${'$'}{ANDROID_SDK_ROOT:-${'$'}{ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_SDK_ROOT=${'$'}SDK_ROOT" >> "${'$'}GITHUB_ENV"
+          echo "ANDROID_HOME=${'$'}SDK_ROOT" >> "${'$'}GITHUB_ENV"
+          echo "${'$'}SDK_ROOT/cmdline-tools/latest/bin:${'$'}SDK_ROOT/platform-tools" >> "${'$'}GITHUB_PATH"
+
+          CMDLINE_BIN="${'$'}SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "${'$'}CMDLINE_BIN" ]; then
+            CMDLINE_BIN=${'$'}(find "${'$'}SDK_ROOT" -name sdkmanager -type f 2>/dev/null | head -n 1 || true)
+          fi
+
+          if [ -n "${'$'}CMDLINE_BIN" ] && [ -x "${'$'}CMDLINE_BIN" ]; then
+            yes | "${'$'}CMDLINE_BIN" --sdk_root="${'$'}SDK_ROOT" --licenses > /dev/null || true
+            "${'$'}CMDLINE_BIN" --sdk_root="${'$'}SDK_ROOT" "platform-tools" "platforms;android-36" "platforms;android-36.1" "build-tools;36.0.0" || \
+            "${'$'}CMDLINE_BIN" --sdk_root="${'$'}SDK_ROOT" "platform-tools" "platforms;android-36" "build-tools;36.0.0" || true
+          else
+            mkdir -p "${'$'}SDK_ROOT/licenses"
+            printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee" > "${'$'}SDK_ROOT/licenses/android-sdk-license"
+            printf "\n84831b9409646a918e30573bab4c9c91346d8abd" > "${'$'}SDK_ROOT/licenses/android-sdk-preview-license"
+          fi
+
+      - name: Setup Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.3.1"
+
+      - name: Restore Debug Keystore from Base64
+        run: |
+          if [ -f "debug.keystore.base64" ] && [ ! -f "debug.keystore" ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          elif [ ! -f "debug.keystore" ]; then
+            keytool -genkey -v -keystore debug.keystore \
+              -storepass android -alias androiddebugkey \
+              -keypass android -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Prepare .env File for Secrets Gradle Plugin
+        run: |
+          if [ ! -f ".env" ]; then
+            cp .env.example .env
+          fi
+
+      - name: Assemble Debug APK
+        if: ${'$'}{{ github.event.inputs.build_variant != 'release' }}
+        run: gradle :app:assembleDebug -Pkotlin.compiler.execution.strategy=daemon --max-workers=1 --no-daemon --stacktrace
+
+      - name: Assemble Release APK (if signing secrets configured)
+        if: ${'$'}{{ github.event.inputs.build_variant == 'release' || github.event.inputs.build_variant == 'both' }}
+        env:
+          STORE_PASSWORD: ${'$'}{{ secrets.STORE_PASSWORD || 'android' }}
+          KEY_PASSWORD: ${'$'}{{ secrets.KEY_PASSWORD || 'android' }}
+          KEYSTORE_PATH: ${'$'}{{ secrets.KEYSTORE_PATH || 'debug.keystore' }}
+        run: |
+          if [ ! -f "${'$'}KEYSTORE_PATH" ]; then
+            cp debug.keystore my-upload-key.jks
+            keytool -changealias -keystore my-upload-key.jks -storepass android -alias androiddebugkey -destalias upload || true
+          fi
+          gradle :app:assembleRelease -Pkotlin.compiler.execution.strategy=daemon --max-workers=1 --no-daemon --stacktrace
+
+      - name: Rename and Collect APK Artifacts
+        run: |
+          mkdir -p dist-apk
+          if [ -f "app/build/outputs/apk/debug/app-debug.apk" ]; then
+            cp app/build/outputs/apk/debug/app-debug.apk dist-apk/UTube-v1.0-Unlocked-debug.apk
+          fi
+          if [ -f "app/build/outputs/apk/release/app-release.apk" ]; then
+            cp app/build/outputs/apk/release/app-release.apk dist-apk/UTube-v1.0-Unlocked-release.apk
+          fi
+          ls -lh dist-apk/
+
+      - name: Upload UTube APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UTube-Android-APK
+          path: dist-apk/*.apk
+          if-no-files-found: error
+          retention-days: 30
+            """.trimIndent()
+
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(12.dp),
@@ -931,22 +1050,32 @@ fun ApkWorkflowBottomSheet(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "2. GitHub Actions CI/CD Workflow (Included)",
+                            text = "2. GitHub Actions CI/CD Workflow (Fixed)",
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.tertiary
                         )
-                        TextButton(
-                            onClick = {
-                                clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(".github/workflows/build-apk.yml"))
-                                onShowSnackbar("Copied workflow path: .github/workflows/build-apk.yml")
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            TextButton(
+                                onClick = {
+                                    clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(workflowYamlContent))
+                                    onShowSnackbar("Copied full build-apk.yml workflow YAML to clipboard!")
+                                }
+                            ) {
+                                Text("Copy YAML")
                             }
-                        ) {
-                            Text("Copy Path")
+                            TextButton(
+                                onClick = {
+                                    clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(".github/workflows/build-apk.yml"))
+                                    onShowSnackbar("Copied workflow path: .github/workflows/build-apk.yml")
+                                }
+                            ) {
+                                Text("Copy Path")
+                            }
                         }
                     }
                     Text(
-                        text = "File: .github/workflows/build-apk.yml\nPush to GitHub from AI Studio and GitHub Actions will automatically compile and upload 'UTube-v1.0-Unlocked-debug.apk' under the Actions -> Artifacts tab.",
+                        text = "File: .github/workflows/build-apk.yml\nIncludes JDK 21, Android SDK 36.1 setup, and KSP daemon isolation (-Pkotlin.compiler.execution.strategy=daemon) so GitHub Actions compiles and uploads 'UTube-v1.0-Unlocked-debug.apk' cleanly.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
