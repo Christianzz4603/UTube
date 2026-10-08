@@ -38,7 +38,7 @@ import com.google.firebase.auth.auth
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun YouLibraryScreen(
-    viewModel: YouTube views Odel odel,
+    viewModel: YouTubeViewModel,
     onEnterCast: () -> Unit,
     onSignOut: () -> Unit = {}
 ) {
