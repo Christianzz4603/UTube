@@ -12,7 +12,20 @@
           "package_name": "com.aistudio.youtube.vstrxm"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "3116906054-4psoicp1elhdjkk4iql9mfh49dbsdovl.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.aistudio.youtube.vstrxm",
+            "certificate_hash": "460c6e988edb4ce3aff5b6f1aade3c613df03485"
+          }
+        },
+        {
+          "client_id": "3116906054-obmmfegrv53qfp8qtlgkg2mkvpbreu9m.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyBvvmTr3WRbpjB0r4Bv36QEUPbKo0NZRGk"
@@ -20,7 +33,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "3116906054-obmmfegrv53qfp8qtlgkg2mkvpbreu9m.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }
