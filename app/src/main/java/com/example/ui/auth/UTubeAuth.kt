@@ -148,7 +148,8 @@ fun signOutUTube(
 
 @Composable
 fun UTubeSignInScreen(
-    onAuthSuccess: () -> Unit
+    onAuthSuccess: () -> Unit,
+    onSkip: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -316,6 +317,7 @@ fun UTubeSignInScreen(
                         scope = coroutineScope,
                         onAuthCancelled = {
                             isLoading = false
+                            errorMessage = "Google sign-in didn't complete. If you picked an account and nothing happened, this build's signing key (SHA-1) isn't registered in Firebase yet. You can continue without signing in."
                         }
                     )
                 },
@@ -350,6 +352,19 @@ fun UTubeSignInScreen(
                         fontSize = 16.sp
                     )
                 }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            TextButton(
+                onClick = onSkip,
+                modifier = Modifier.testTag("skip_sign_in_button")
+            ) {
+                Text(
+                    text = "Continue without signing in",
+                    color = Color(0xFFAAAAAA),
+                    fontSize = 14.sp
+                )
             }
         }
     }

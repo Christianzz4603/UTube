@@ -29,11 +29,16 @@ class MainActivity : ComponentActivity() {
         val cloudRepository = runCatching { UTubeCloudRepository(applicationContext) }.getOrNull()
         val viewModelFactory = YouTubeViewModel.Factory(repository, cloudRepository)
 
+        val prefs = getSharedPreferences("utube_prefs", MODE_PRIVATE)
+
         setContent {
             val viewModel: YouTubeViewModel = viewModel(factory = viewModelFactory)
             val isDarkTheme by viewModel.isDarkTheme.collectAsState()
             var isSignedIn by remember {
-                mutableStateOf(runCatching { Firebase.auth.currentUser != null }.getOrDefault(false))
+                mutableStateOf(
+                    runCatching { Firebase.auth.currentUser != null }.getOrDefault(false) ||
+                        prefs.getBoolean("guest_mode", false)
+                )
             }
 
             MyApplicationTheme(darkTheme = isDarkTheme) {
@@ -42,6 +47,10 @@ class MainActivity : ComponentActivity() {
                         onAuthSuccess = {
                             isSignedIn = true
                             viewModel.showSnackbar("Signed in to Google Account • Synced Watch History & SponsorBlock")
+                        },
+                        onSkip = {
+                            prefs.edit().putBoolean("guest_mode", true).apply()
+                            isSignedIn = true
                         }
                     )
                 } else {
@@ -49,6 +58,7 @@ class MainActivity : ComponentActivity() {
                         viewModel = viewModel,
                         onEnterPipMode = { enterWatchPipMode() },
                         onSignOut = {
+                            prefs.edit().putBoolean("guest_mode", false).apply()
                             isSignedIn = false
                         }
                     )
