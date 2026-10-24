@@ -15,7 +15,7 @@ import androidx.room.RoomDatabase
         SearchQueryEntity::class,
         NotificationEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class YouTubeDatabase : RoomDatabase() {

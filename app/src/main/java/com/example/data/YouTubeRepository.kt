@@ -17,16 +17,15 @@ class YouTubeRepository(private val dao: YouTubeDao) {
     val searchHistory: Flow<List<SearchQueryEntity>> = dao.getSearchHistory()
     val notifications: Flow<List<NotificationEntity>> = dao.getAllNotifications()
 
+    /** The app no longer ships fake demo data: everything shown comes from YouTube. */
     suspend fun ensureSeedData() {
-        if (dao.getVideoCount() == 0) {
-            dao.insertChannels(SeedData.initialChannels)
-            dao.insertVideos(SeedData.initialVideos)
-            dao.insertComments(SeedData.initialComments)
-            dao.insertPlaylists(SeedData.initialPlaylists)
-            dao.insertCommunityPosts(SeedData.initialCommunityPosts)
-            SeedData.initialSearchHistory.forEach { dao.insertSearchQuery(it) }
-            dao.insertNotifications(SeedData.initialNotifications)
-        }
+        // intentionally empty
+    }
+
+    /** Forgets account-specific flags (likes, subscriptions) when the user signs out. */
+    suspend fun clearAccountState() {
+        dao.clearLikes()
+        dao.clearSubscriptions()
     }
 
     fun getCommentsForVideo(videoId: String): Flow<List<CommentEntity>> =
@@ -66,11 +65,12 @@ class YouTubeRepository(private val dao: YouTubeDao) {
     }
 
     suspend fun recordWatchProgress(video: VideoEntity, progressFraction: Float) {
+        // Re-read the latest row so we never overwrite likes/saves changed while watching.
+        val latest = dao.getVideoById(video.id) ?: video
         dao.updateVideo(
-            video.copy(
+            latest.copy(
                 watchProgressFraction = progressFraction.coerceIn(0.05f, 1f),
-                lastWatchedTimestamp = System.currentTimeMillis(),
-                viewsCount = video.viewsCount + 1
+                lastWatchedTimestamp = System.currentTimeMillis()
             )
         )
     }

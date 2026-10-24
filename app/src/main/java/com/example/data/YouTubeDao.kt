@@ -10,10 +10,10 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface YouTubeDao {
     // Videos
-    @Query("SELECT * FROM videos WHERE isShort = 0 ORDER BY isUserUploaded DESC, viewsCount DESC")
+    @Query("SELECT * FROM videos WHERE homeOrder >= 0 AND isShort = 0 ORDER BY homeOrder ASC")
     fun getHomeVideos(): Flow<List<VideoEntity>>
 
-    @Query("SELECT * FROM videos WHERE isShort = 1 ORDER BY viewsCount DESC")
+    @Query("SELECT * FROM videos WHERE shortsOrder >= 0 ORDER BY shortsOrder ASC")
     fun getShortsVideos(): Flow<List<VideoEntity>>
 
     @Query("SELECT * FROM videos")
@@ -52,7 +52,31 @@ interface YouTubeDao {
     @Query("UPDATE videos SET lastWatchedTimestamp = 0, watchProgressFraction = 0 WHERE lastWatchedTimestamp > 0")
     suspend fun clearWatchHistory()
 
+    @Query("UPDATE videos SET homeOrder = -1")
+    suspend fun clearHomeOrder()
+
+    @Query("UPDATE videos SET shortsOrder = -1")
+    suspend fun clearShortsOrder()
+
+    @Query("UPDATE videos SET homeOrder = :position WHERE id = :id")
+    suspend fun setHomeOrder(id: String, position: Int)
+
+    @Query("UPDATE videos SET shortsOrder = :position WHERE id = :id")
+    suspend fun setShortsOrder(id: String, position: Int)
+
+    @Query("UPDATE videos SET isLiked = 0")
+    suspend fun clearLikes()
+
+    @Query("UPDATE videos SET isLiked = 1 WHERE id = :id")
+    suspend fun setLiked(id: String)
+
     // Channels
+    @Query("SELECT * FROM channels WHERE id = :id LIMIT 1")
+    suspend fun getChannelById(id: String): ChannelEntity?
+
+    @Query("UPDATE channels SET isSubscribed = 0")
+    suspend fun clearSubscriptions()
+
     @Query("SELECT * FROM channels ORDER BY isSubscribed DESC, subscriberCount DESC")
     fun getAllChannels(): Flow<List<ChannelEntity>>
 
@@ -68,6 +92,9 @@ interface YouTubeDao {
     // Comments
     @Query("SELECT * FROM comments WHERE videoId = :videoId ORDER BY isPinned DESC, likesCount DESC, id DESC")
     fun getCommentsForVideo(videoId: String): Flow<List<CommentEntity>>
+
+    @Query("DELETE FROM comments WHERE videoId = :videoId")
+    suspend fun deleteCommentsForVideo(videoId: String)
 
     @Query("SELECT * FROM comments")
     fun getAllComments(): Flow<List<CommentEntity>>

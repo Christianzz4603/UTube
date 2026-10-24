@@ -31,6 +31,8 @@ fun HomeScreen(
     val isIncognito by viewModel.isIncognito.collectAsState()
     val isInlineMutedPreview by viewModel.isInlineMutedPreview.collectAsState()
 
+    val isRefreshing by viewModel.isRefreshing.collectAsState()
+
     val unreadCount = notifications.count { !it.isRead }
 
     Column(
@@ -44,7 +46,10 @@ fun HomeScreen(
             onCastClick = onEnterCast,
             onNotificationsClick = { viewModel.openNotifications() },
             onSearchClick = { viewModel.openSearch() },
-            onLogoClick = { viewModel.selectCategory("All") }
+            onLogoClick = {
+                viewModel.selectCategory("All")
+                viewModel.refreshAll()
+            }
         )
 
         CategoryFilterChipsRow(
@@ -63,7 +68,9 @@ fun HomeScreen(
                     .padding(32.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                if (isRefreshing) {
+                    CircularProgressIndicator()
+                } else Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(
                         imageVector = Icons.Outlined.VideoLibrary,
                         contentDescription = null,
@@ -78,7 +85,7 @@ fun HomeScreen(
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Try selecting another filter chip or upload your own video with the + button.",
+                        text = "Tap the YouTube logo to refresh, or pick another filter chip.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

@@ -59,9 +59,9 @@ fun YouLibraryScreen(
     val credentialManager = remember { CredentialManager.create(context) }
 
     val currentUser = remember { runCatching { Firebase.auth.currentUser }.getOrNull() }
-    val displayName = currentUser?.displayName?.takeIf { it.isNotBlank() } ?: "Christian Studio"
-    val userEmail = currentUser?.email ?: "christianjaydelica3@gmail.com"
-    val userHandle = "@${userEmail.substringBefore("@")}"
+    val displayName = currentUser?.displayName?.takeIf { it.isNotBlank() } ?: "Guest"
+    val userEmail = currentUser?.email.orEmpty()
+    val userHandle = if (userEmail.isBlank()) "Not signed in" else "@${userEmail.substringBefore("@")}"
 
     val combinedHistoryVideos = remember(watchHistory, cloudWatchHistory, allVideos) {
         val cloudMapped = cloudWatchHistory.mapNotNull { doc ->

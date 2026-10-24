@@ -45,6 +45,7 @@ import com.example.data.formatCompactCount
 import com.example.ui.YouTubeViewModel
 import com.example.ui.components.ChannelAvatarBadge
 import com.example.ui.components.VideoThumbnailImage
+import com.example.ui.components.YouTubeEmbedPlayer
 import com.example.ui.theme.YouTubeRed
 import kotlinx.coroutines.delay
 
@@ -194,30 +195,12 @@ private fun ShortVideoPage(
         )
 
         if (isActive) {
-            AndroidView(
-                factory = { ctx ->
-                    VideoView(ctx).apply {
-                        setVideoURI(Uri.parse(shortVideo.videoUrl))
-                        setOnPreparedListener { mp ->
-                            mp.isLooping = true
-                            mp.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING)
-                            isVideoReady = true
-                            if (!isPaused) start()
-                        }
-                        setOnErrorListener { _, _, _ ->
-                            isVideoReady = false
-                            true
-                        }
-                    }
-                },
-                update = { view ->
-                    if (isPaused && view.isPlaying) {
-                        view.pause()
-                    } else if (!isPaused && !view.isPlaying && isVideoReady) {
-                        view.start()
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
+            YouTubeEmbedPlayer(
+                videoId = shortVideo.id,
+                modifier = Modifier.fillMaxSize(),
+                loop = true,
+                onStateChange = { state -> if (state == 1) isVideoReady = true },
+                onError = { isVideoReady = false }
             )
         }
 

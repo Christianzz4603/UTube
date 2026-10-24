@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -19,7 +20,8 @@ enum class SubFilter {
 @OptIn(ExperimentalCoroutinesApi::class)
 class YouTubeViewModel(
     private val repository: YouTubeRepository,
-    private val cloudRepository: UTubeCloudRepository? = null
+    private val cloudRepository: UTubeCloudRepository? = null,
+    private val sync: YouTubeSync? = null
 ) : ViewModel() {
 
     // Navigation & UI state
@@ -30,7 +32,7 @@ class YouTubeViewModel(
     val selectedCategory: StateFlow<String> = _selectedCategory.asStateFlow()
 
     val categories = listOf(
-        "All", "New to you", "Tech", "Gaming", "Cooking", "Nature", "Music", "Movies", "Live", "Recently uploaded", "Watched"
+        "All", "Music", "Gaming", "Tech", "Entertainment", "News", "Sports", "Education", "Live", "Watched"
     )
 
     // SponsorBlock State & Configuration (100% Free & Built-In)
@@ -40,10 +42,10 @@ class YouTubeViewModel(
     private val _sponsorSkipBehavior = MutableStateFlow(SponsorSkipBehavior.AUTO_SKIP)
     val sponsorSkipBehavior: StateFlow<SponsorSkipBehavior> = _sponsorSkipBehavior.asStateFlow()
 
-    private val _segmentsSkippedCount = MutableStateFlow(14)
+    private val _segmentsSkippedCount = MutableStateFlow(0)
     val segmentsSkippedCount: StateFlow<Int> = _segmentsSkippedCount.asStateFlow()
 
-    private val _secondsSavedBySponsorBlock = MutableStateFlow(412)
+    private val _secondsSavedBySponsorBlock = MutableStateFlow(0)
     val secondsSavedBySponsorBlock: StateFlow<Int> = _secondsSavedBySponsorBlock.asStateFlow()
 
     private val _isReturnDislikeEnabled = MutableStateFlow(true)
@@ -217,27 +219,20 @@ class YouTubeViewModel(
         queueIds.mapNotNull { id -> videos.find { it.id == id } }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    private val _onlineSearchResults = MutableStateFlow<List<VideoEntity>>(emptyList())
+
+    private val _isSearching = MutableStateFlow(false)
+    val isSearching: StateFlow<Boolean> = _isSearching.asStateFlow()
+
     val searchResults: StateFlow<List<VideoEntity>> = combine(
-        allVideos,
-        _searchQuery,
+        _onlineSearchResults,
         _searchDurationFilter
-    ) { videos, query, durationFilter ->
-        val q = query.trim()
-        val matched = if (q.isEmpty()) {
-            videos
-        } else {
-            videos.filter {
-                it.title.contains(q, ignoreCase = true) ||
-                    it.channelName.contains(q, ignoreCase = true) ||
-                    it.category.contains(q, ignoreCase = true) ||
-                    it.description.contains(q, ignoreCase = true)
-            }
-        }
+    ) { videos, durationFilter ->
         when (durationFilter) {
-            "Under 4 mins" -> matched.filter { it.durationSeconds < 240 }
-            "4-20 mins" -> matched.filter { it.durationSeconds in 240..1200 }
-            "Shorts" -> matched.filter { it.isShort }
-            else -> matched
+            "Under 4 mins" -> videos.filter { it.durationSeconds in 1 until 240 }
+            "4-20 mins" -> videos.filter { it.durationSeconds in 240..1200 }
+            "Shorts" -> videos.filter { it.isShort }
+            else -> videos
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -259,17 +254,20 @@ class YouTubeViewModel(
         currentPlayingVideo
     ) { id, video ->
         id to (video?.durationSeconds ?: 15)
-    }.flatMapLatest { (id, duration) ->
+    }.distinctUntilChanged().flatMapLatest { (id, _) ->
         if (id == null) {
             flowOf(emptyList())
         } else {
-            val defaults = DefaultSponsorSegments.getDefaultSegmentsForVideo(id, duration)
-            if (cloudRepository != null) {
-                cloudRepository.observeSponsorSegments(id)
-                    .map { cloudSegs -> (defaults + cloudSegs).distinctBy { "${it.category}_${it.startTimeSec}_${it.endTimeSec}" }.sortedBy { it.startTimeSec } }
-                    .catch { emit(defaults) }
-            } else {
-                flowOf(defaults)
+            val remote = flow {
+                emit(runCatching { SponsorBlockApi.fetchSegments(id) }.getOrDefault(emptyList()))
+            }
+            val cloud = cloudRepository?.observeSponsorSegments(id)
+                ?.catch { emit(emptyList()) }
+                ?: flowOf(emptyList())
+            combine(remote, cloud) { r, c ->
+                (r + c)
+                    .distinctBy { "${it.category}_${it.startTimeSec}_${it.endTimeSec}" }
+                    .sortedBy { it.startTimeSec }
             }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -286,6 +284,7 @@ class YouTubeViewModel(
 
     fun selectTab(tab: YouTubeTab) {
         _selectedTab.value = tab
+        if (tab == YouTubeTab.SHORTS) ensureShorts()
     }
 
     fun selectCategory(category: String) {
@@ -293,19 +292,14 @@ class YouTubeViewModel(
     }
 
     fun openVideo(video: VideoEntity) {
-        if (video.isShort) {
-            _selectedTab.value = YouTubeTab.SHORTS
-            _currentPlayingVideoId.value = null
-            return
-        }
         _currentPlayingVideoId.value = video.id
         _isPlayerMinimized.value = false
         _isPlaying.value = true
+        loadCommentsFor(video.id)
         if (!_isIncognito.value) {
             viewModelScope.launch {
-                val nextProgress = if (video.watchProgressFraction > 0.1f) video.watchProgressFraction else 0.25f
-                repository.recordWatchProgress(video, nextProgress)
-                cloudRepository?.syncWatchHistoryEntry(video, nextProgress)
+                repository.recordWatchProgress(video, video.watchProgressFraction)
+                cloudRepository?.syncWatchHistoryEntry(video, video.watchProgressFraction)
             }
         }
     }
@@ -372,12 +366,14 @@ class YouTubeViewModel(
         viewModelScope.launch {
             repository.toggleLike(video)
             if (!video.isLiked) showSnackbar("Added to Liked videos")
+            pushRating(video.id, if (!video.isLiked) "like" else "none")
         }
     }
 
     fun toggleDislike(video: VideoEntity) {
         viewModelScope.launch {
             repository.toggleDislike(video)
+            pushRating(video.id, if (!video.isDisliked) "dislike" else "none")
         }
     }
 
@@ -407,6 +403,12 @@ class YouTubeViewModel(
                 if (!channel.isSubscribed) "Subscribed to ${channel.name}"
                 else "Unsubscribed from ${channel.name}"
             )
+            val s = sync
+            val token = accessToken()
+            if (s != null && token != null) {
+                runCatching { s.setSubscribed(channel.id, !channel.isSubscribed, token) }
+                    .onFailure { reportError(it, "Couldn't update subscription on YouTube") }
+            }
         }
     }
 
@@ -422,10 +424,10 @@ class YouTubeViewModel(
                     handle = "@${channelName.replace(" ", "")}",
                     avatarColor = avatarColor,
                     bannerColor = avatarColor,
-                    subscriberCount = 12_500,
-                    videosCount = 1,
-                    bio = "Creator channel on YouTube.",
-                    isVerified = true,
+                    subscriberCount = 0,
+                    videosCount = 0,
+                    bio = "",
+                    isVerified = false,
                     isSubscribed = true
                 )
                 repository.toggleSubscription(created)
@@ -449,13 +451,20 @@ class YouTubeViewModel(
     fun addComment(videoId: String, text: String) {
         if (text.isBlank()) return
         viewModelScope.launch {
-            repository.addComment(
-                videoId = videoId,
-                authorName = "Christian Studio",
-                authorHandle = "@christianjaydelica",
-                text = text
-            )
-            showSnackbar("Comment posted")
+            val s = sync
+            val token = accessToken()
+            if (s == null || token == null) {
+                showSnackbar("Sign in with Google to comment")
+                return@launch
+            }
+            runCatching {
+                s.postComment(videoId, text.trim(), token)
+                s.loadComments(videoId, token)
+            }.onSuccess {
+                showSnackbar("Comment posted")
+            }.onFailure {
+                reportError(it, "Couldn't post comment")
+            }
         }
     }
 
@@ -508,16 +517,7 @@ class YouTubeViewModel(
     }
 
     fun createCommunityPost(contentText: String, pollOptions: List<String>) {
-        if (contentText.isBlank()) return
-        viewModelScope.launch {
-            repository.createCommunityPost(
-                channelName = "Christian Studio",
-                channelHandle = "@christianjaydelica",
-                contentText = contentText,
-                pollOptions = pollOptions
-            )
-            showSnackbar("Community post published!")
-        }
+        showSnackbar("Community posts can't be created through the YouTube API")
     }
 
     fun uploadUserVideo(
@@ -528,24 +528,8 @@ class YouTubeViewModel(
         customThumbnailUri: String,
         thumbnailPreset: String
     ) {
-        if (title.isBlank()) return
-        viewModelScope.launch {
-            val uploaded = repository.uploadUserVideo(
-                title = title,
-                description = description,
-                category = category,
-                isShort = isShort,
-                customThumbnailUri = customThumbnailUri,
-                thumbnailPreset = thumbnailPreset
-            )
-            _isCreateSheetOpen.value = false
-            showSnackbar(if (isShort) "Short uploaded to Shorts feed!" else "Video published to your channel!")
-            if (isShort) {
-                _selectedTab.value = YouTubeTab.SHORTS
-            } else {
-                openVideo(uploaded)
-            }
-        }
+        _isCreateSheetOpen.value = false
+        showSnackbar("Uploading isn't supported in UTube yet - use the YouTube Studio app")
     }
 
     fun openSearch() {
@@ -558,12 +542,31 @@ class YouTubeViewModel(
 
     fun updateSearchQuery(query: String) {
         _searchQuery.value = query
+        if (query.isBlank()) {
+            searchJob?.cancel()
+            _isSearching.value = false
+            _onlineSearchResults.value = emptyList()
+        }
     }
 
     fun submitSearch(query: String) {
+        val q = query.trim()
         _searchQuery.value = query
-        viewModelScope.launch {
-            repository.addSearchQuery(query)
+        if (q.isEmpty()) return
+        viewModelScope.launch { repository.addSearchQuery(q) }
+        val s = sync ?: return
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
+            _isSearching.value = true
+            try {
+                _onlineSearchResults.value = s.search(q, accessToken(), regionCode())
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                reportError(e, "Search failed")
+            } finally {
+                _isSearching.value = false
+            }
         }
     }
 
@@ -767,6 +770,107 @@ class YouTubeViewModel(
         _doubleTapSeekSeconds.value = next
     }
 
+    // ---- Live YouTube data -------------------------------------------------
+
+    /** Returns an OAuth access token for the YouTube API, or null (guest / not granted). */
+    var tokenProvider: (suspend () -> String?)? = null
+
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+
+    private var shortsRequested = false
+    private var searchJob: Job? = null
+
+    private suspend fun accessToken(): String? = try {
+        tokenProvider?.invoke()
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        null
+    }
+
+    private fun regionCode(): String = java.util.Locale.getDefault().country.ifBlank { "US" }
+
+    private fun reportError(e: Throwable, what: String) {
+        showSnackbar("$what: ${e.message?.take(160) ?: e.javaClass.simpleName}")
+    }
+
+    /** Reloads home feed, subscriptions, liked videos and playlists from YouTube. */
+    fun refreshAll() {
+        val s = sync ?: return
+        if (_isRefreshing.value) return
+        viewModelScope.launch {
+            _isRefreshing.value = true
+            try {
+                val token = accessToken()
+                var subscribed = emptyList<String>()
+                if (token != null) {
+                    try {
+                        subscribed = s.refreshLibrary(token)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        reportError(e, "Couldn't load your YouTube library")
+                    }
+                }
+                try {
+                    s.refreshHome(token, regionCode(), subscribed)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    reportError(e, "Couldn't load videos")
+                }
+            } finally {
+                _isRefreshing.value = false
+            }
+        }
+    }
+
+    private fun ensureShorts() {
+        val s = sync ?: return
+        if (shortsRequested) return
+        shortsRequested = true
+        viewModelScope.launch {
+            try {
+                s.refreshShorts(accessToken(), regionCode())
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                shortsRequested = false
+                reportError(e, "Couldn't load Shorts")
+            }
+        }
+    }
+
+    private fun loadCommentsFor(videoId: String) {
+        val s = sync ?: return
+        viewModelScope.launch {
+            try {
+                s.loadComments(videoId, accessToken())
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // comments are optional
+            }
+        }
+    }
+
+    private suspend fun pushRating(videoId: String, rating: String) {
+        val s = sync ?: return
+        val token = accessToken() ?: return
+        try {
+            s.rate(videoId, rating, token)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            reportError(e, "Couldn't update rating on YouTube")
+        }
+    }
+
+    fun clearAccountData() {
+        viewModelScope.launch { repository.clearAccountState() }
+    }
+
     fun showSnackbar(message: String) {
         _snackbarMessage.value = message
     }
@@ -777,11 +881,12 @@ class YouTubeViewModel(
 
     class Factory(
         private val repository: YouTubeRepository,
-        private val cloudRepository: UTubeCloudRepository? = null
+        private val cloudRepository: UTubeCloudRepository? = null,
+        private val sync: YouTubeSync? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return YouTubeViewModel(repository, cloudRepository) as T
+            return YouTubeViewModel(repository, cloudRepository, sync) as T
         }
     }
 }

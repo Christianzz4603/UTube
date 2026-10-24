@@ -39,6 +39,8 @@ import com.example.data.*
 import com.example.ui.YouTubeViewModel
 import com.example.ui.components.ChannelAvatarBadge
 import com.example.ui.components.VideoThumbnailImage
+import com.example.ui.components.YouTubeEmbedPlayer
+import com.example.ui.components.YouTubePlayerController
 import com.example.ui.components.YouTubeVideoCard
 import com.example.ui.theme.YouTubeRed
 import kotlinx.coroutines.delay
@@ -88,7 +90,7 @@ fun VideoWatchOverlay(
     var activeManualSkipSegment by remember(video.id) { mutableStateOf<SponsorSegmentDoc?>(null) }
     val skippedSegmentIds = remember(video.id) { mutableStateListOf<String>() }
     var showLiveChat by remember(video.id) { mutableStateOf(video.isLive) }
-    var videoViewRef by remember { mutableStateOf<VideoView?>(null) }
+    var playerController by remember(video.id) { mutableStateOf<YouTubePlayerController?>(null) }
 
     val channel = allChannels.find { it.id == video.channelId }
     val isSubscribed = channel?.isSubscribed ?: false
@@ -102,41 +104,6 @@ fun VideoWatchOverlay(
         viewModel.minimizePlayer()
     }
 
-    // Periodically sync VideoView progress & SponsorBlock segment detection
-    LaunchedEffect(video.id, isPlaying, isSponsorBlockEnabled, sponsorSkipBehavior, sponsorSegments) {
-        while (true) {
-            delay(400)
-            val vv = videoViewRef
-            if (vv != null && vv.isPlaying) {
-                currentPositionMs = vv.currentPosition
-                if (vv.duration > 0) {
-                    totalDurationMs = vv.duration
-                }
-                val currentSec = currentPositionMs / 1000
-                if (isSponsorBlockEnabled && sponsorSkipBehavior != SponsorSkipBehavior.DISABLED) {
-                    val matchingSeg = sponsorSegments.firstOrNull { seg ->
-                        currentSec in seg.startTimeSec until seg.endTimeSec
-                    }
-                    if (matchingSeg != null) {
-                        if (sponsorSkipBehavior == SponsorSkipBehavior.AUTO_SKIP && matchingSeg.id !in skippedSegmentIds) {
-                            skippedSegmentIds.add(matchingSeg.id)
-                            val targetMs = (matchingSeg.endTimeSec * 1000).coerceAtMost(totalDurationMs)
-                            vv.seekTo(targetMs)
-                            currentPositionMs = targetMs
-                            viewModel.recordSponsorSkip(matchingSeg)
-                            activeManualSkipSegment = null
-                        } else if (sponsorSkipBehavior == SponsorSkipBehavior.SHOW_SKIP_BUTTON) {
-                            activeManualSkipSegment = matchingSeg
-                        }
-                    } else {
-                        activeManualSkipSegment = null
-                    }
-                } else {
-                    activeManualSkipSegment = null
-                }
-            }
-        }
-    }
 
     LaunchedEffect(seekRippleText) {
         if (seekRippleText != null) {
@@ -233,70 +200,42 @@ fun VideoWatchOverlay(
             .background(MaterialTheme.colorScheme.background)
             .testTag("full_video_watch_page")
     ) {
-        // 16:9 Interactive Video Player Container with Ambient Glow
+        // Real YouTube player (official IFrame player inside a WebView)
+        var playerError by remember(video.id) { mutableStateOf<Int?>(null) }
+        var lastSavedSec by remember(video.id) { mutableIntStateOf(-100) }
+
+        LaunchedEffect(playbackSpeed, playerController) {
+            playerController?.setSpeed(playbackSpeed)
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f)
                 .background(Color.Black)
-                .pointerInput(video.id, isScreenLocked, doubleTapSeekSeconds) {
-                    detectTapGestures(
-                        onTap = { showPlayerControls = !showPlayerControls },
-                        onLongPress = {
-                            if (!isScreenLocked) {
-                                isHolding2xSpeed = true
-                            }
-                        },
-                        onPress = {
-                            tryAwaitRelease()
-                            isHolding2xSpeed = false
-                        },
-                        onDoubleTap = { offset ->
-                            if (!isScreenLocked) {
-                                val vv = videoViewRef
-                                val deltaMs = doubleTapSeekSeconds * 1000
-                                if (offset.x < size.width / 2f) {
-                                    val nextPos = ((vv?.currentPosition ?: currentPositionMs) - deltaMs).coerceAtLeast(0)
-                                    vv?.seekTo(nextPos)
-                                    currentPositionMs = nextPos
-                                    seekRippleText = "⏪ -${doubleTapSeekSeconds} seconds"
-                                } else {
-                                    val nextPos = ((vv?.currentPosition ?: currentPositionMs) + deltaMs)
-                                        .coerceAtMost(totalDurationMs)
-                                    vv?.seekTo(nextPos)
-                                    currentPositionMs = nextPos
-                                    seekRippleText = "⏩ +${doubleTapSeekSeconds} seconds"
-                                }
-                            }
-                        }
-                    )
-                }
         ) {
-            // Fallback high-res thumbnail while stream buffers
-            VideoThumbnailImage(
-                video = video,
-                modifier = Modifier.fillMaxSize()
-            )
+            if (playerError == null) {
+                val resumeSec = if (
+                    video.lastWatchedTimestamp > 0L &&
+                    video.durationSeconds > 0 &&
+                    video.watchProgressFraction in 0.03f..0.95f
+                ) {
+                    (video.watchProgressFraction * video.durationSeconds).toInt()
+                } else 0
 
-            // Real Android VideoView streaming MP4
-            AndroidView(
-                factory = { ctx ->
-                    VideoView(ctx).apply {
-                        videoViewRef = this
-                        setVideoURI(Uri.parse(video.videoUrl))
-                        setOnPreparedListener { mp ->
-                            totalDurationMs = mp.duration.coerceAtLeast(video.durationSeconds * 1000)
-                            mp.isLooping = isLoopVideo
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                                runCatching {
-                                    mp.playbackParams = mp.playbackParams.setSpeed(playbackSpeed)
-                                }
-                            }
-                            if (isPlaying) start()
-                        }
-                        setOnCompletionListener {
+                YouTubeEmbedPlayer(
+                    videoId = video.id,
+                    modifier = Modifier.fillMaxSize(),
+                    startSeconds = resumeSec,
+                    onControllerReady = { controller ->
+                        playerController = controller
+                        controller.setSpeed(playbackSpeed)
+                    },
+                    onStateChange = { state ->
+                        if (state == 0) {
                             if (isLoopVideo) {
-                                start()
+                                playerController?.seekTo(0f)
+                                playerController?.play()
                             } else if (watchQueueVideos.isNotEmpty()) {
                                 val nextQueued = watchQueueVideos.first()
                                 viewModel.removeFromQueue(nextQueued.id)
@@ -307,361 +246,104 @@ fun VideoWatchOverlay(
                                 viewModel.setPlaying(false)
                             }
                         }
-                        setOnErrorListener { _, _, _ -> true }
-                    }
-                },
-                update = { vv ->
-                    videoViewRef = vv
-                    if (isPlaying && !vv.isPlaying) {
-                        vv.start()
-                    } else if (!isPlaying && vv.isPlaying) {
-                        vv.pause()
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-
-            // Hold-to-2x Speed Pill at Top Center (Exact YouTube Gesture Feedback)
-            if (isHolding2xSpeed) {
-                Surface(
-                    color = Color.Black.copy(alpha = 0.78f),
-                    shape = RoundedCornerShape(18.dp),
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = 12.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "2x",
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Icon(
-                            imageVector = Icons.Filled.FastForward,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
-            }
-
-            // Stats for Nerds Technical Overlay
-            if (isStatsForNerds) {
-                Surface(
-                    color = Color.Black.copy(alpha = 0.82f),
-                    shape = RoundedCornerShape(6.dp),
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(10.dp)
-                ) {
-                    Column(modifier = Modifier.padding(10.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "Stats for nerds",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(
-                                text = "✕",
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                modifier = Modifier.clickable { viewModel.toggleStatsForNerds() }
-                            )
-                        }
-                        Text("Video ID / sCPN: ${video.id} / YT98K-4F2A", color = Color.LightGray, fontSize = 10.sp)
-                        Text("Viewport / Frames: 1920x1080*2.75 / 0 dropped of ${(currentPositionMs / 16).coerceAtLeast(60)}", color = Color.LightGray, fontSize = 10.sp)
-                        Text("Current / Optimal Res: $videoQuality / $videoQuality", color = Color.LightGray, fontSize = 10.sp)
-                        Text("Codecs: vp09.00.51.08.01 (315) / mp4a.40.2 (140)", color = Color.LightGray, fontSize = 10.sp)
-                        Text("Network Activity: 18,420 Kbps • Buffer Health: 24.5 s", color = Color(0xFF4CAF50), fontSize = 10.sp)
-                    }
-                }
-            }
-
-            // Captions Overlay
-            if (isCaptionsEnabled) {
-                Surface(
-                    color = Color.Black.copy(alpha = 0.75f),
-                    shape = RoundedCornerShape(4.dp),
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 32.dp)
-                ) {
-                    Text(
-                        text = "[♪ Playing ${video.title.take(36)}...]",
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
-                }
-            }
-
-            // Double-Tap +/- 10s Ripple Indicator
-            seekRippleText?.let { rippleLabel ->
-                Surface(
-                    color = Color.Black.copy(alpha = 0.7f),
-                    shape = RoundedCornerShape(20.dp),
-                    modifier = Modifier.align(Alignment.Center)
-                ) {
-                    Text(
-                        text = rippleLabel,
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                    )
-                }
-            }
-
-            // Manual SponsorBlock Skip Button (when in Show Skip Button mode)
-            activeManualSkipSegment?.let { seg ->
-                val cat = SponsorCategory.fromKey(seg.category)
-                Surface(
-                    color = Color.Black.copy(alpha = 0.85f),
-                    shape = RoundedCornerShape(20.dp),
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 14.dp, bottom = 52.dp)
-                        .clickable {
-                            val targetMs = (seg.endTimeSec * 1000).coerceAtMost(totalDurationMs)
-                            videoViewRef?.seekTo(targetMs)
-                            currentPositionMs = targetMs
-                            viewModel.recordSponsorSkip(seg)
+                    },
+                    onTime = { cur, dur ->
+                        currentPositionMs = (cur * 1000f).toInt()
+                        if (dur > 0f) totalDurationMs = (dur * 1000f).toInt()
+                        val currentSec = cur.toInt()
+                        if (isSponsorBlockEnabled && sponsorSkipBehavior != SponsorSkipBehavior.DISABLED) {
+                            val matchingSeg = sponsorSegments.firstOrNull { seg ->
+                                currentSec >= seg.startTimeSec && currentSec < seg.endTimeSec
+                            }
+                            if (matchingSeg != null) {
+                                if (sponsorSkipBehavior == SponsorSkipBehavior.AUTO_SKIP && matchingSeg.id !in skippedSegmentIds) {
+                                    skippedSegmentIds.add(matchingSeg.id)
+                                    playerController?.seekTo(matchingSeg.endTimeSec.toFloat())
+                                    viewModel.recordSponsorSkip(matchingSeg)
+                                    activeManualSkipSegment = null
+                                } else if (sponsorSkipBehavior == SponsorSkipBehavior.SHOW_SKIP_BUTTON) {
+                                    activeManualSkipSegment = matchingSeg
+                                }
+                            } else {
+                                activeManualSkipSegment = null
+                            }
+                        } else {
                             activeManualSkipSegment = null
                         }
-                        .testTag("manual_sponsor_skip_button")
+                        if (dur > 0f && currentSec - lastSavedSec >= 15) {
+                            lastSavedSec = currentSec
+                            viewModel.updateWatchProgress(video, cur / dur)
+                        }
+                    },
+                    onError = { code -> playerError = code }
+                )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black)
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Text(
+                        text = "This video can't be played inside UTube",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = if (playerError == 101 || playerError == 150 || playerError == 153) {
+                            "The owner doesn't allow it to be embedded."
+                        } else {
+                            "YouTube reported error $playerError."
+                        },
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 12.sp
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Button(
+                        onClick = {
+                            runCatching {
+                                context.startActivity(
+                                    Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=${video.id}"))
+                                )
+                            }
+                        }
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(10.dp)
-                                .clip(CircleShape)
-                                .background(Color(cat.colorHex))
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Skip ${cat.displayName}",
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Icon(
-                            imageVector = Icons.Filled.SkipNext,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(16.dp)
-                        )
+                        Text("Open in YouTube")
                     }
                 }
             }
 
-            // Custom YouTube Player Controls Overlay
-            androidx.compose.animation.AnimatedVisibility(
-                visible = showPlayerControls,
-                modifier = Modifier.fillMaxSize()
-            ) {
-                Box(
+            activeManualSkipSegment?.let { seg ->
+                Button(
+                    onClick = {
+                        playerController?.seekTo(seg.endTimeSec.toFloat())
+                        viewModel.recordSponsorSkip(seg)
+                        activeManualSkipSegment = null
+                    },
                     modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.45f))
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 12.dp, bottom = 36.dp)
                 ) {
-                    // Top Player Row: Minimize chevron, Autoplay switch, Captions, Settings, PiP
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .align(Alignment.TopCenter)
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(
-                            onClick = { viewModel.minimizePlayer() },
-                            modifier = Modifier.testTag("minimize_player_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.KeyboardArrowDown,
-                                contentDescription = "Minimize player",
-                                tint = Color.White,
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
-
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Switch(
-                                checked = isAutoplayEnabled,
-                                onCheckedChange = { viewModel.toggleAutoplay() },
-                                modifier = Modifier.padding(end = 4.dp)
-                            )
-                            IconButton(onClick = { viewModel.toggleCaptions() }) {
-                                Icon(
-                                    imageVector = if (isCaptionsEnabled) Icons.Filled.ClosedCaption else Icons.Outlined.ClosedCaption,
-                                    contentDescription = "Captions",
-                                    tint = Color.White
-                                )
-                            }
-                            IconButton(onClick = onEnterPipMode) {
-                                Icon(
-                                    imageVector = Icons.Outlined.PictureInPictureAlt,
-                                    contentDescription = "Picture in Picture",
-                                    tint = Color.White
-                                )
-                            }
-                            IconButton(
-                                onClick = { showSettingsSheet = true },
-                                modifier = Modifier.testTag("player_settings_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Settings,
-                                    contentDescription = "Player Settings",
-                                    tint = Color.White
-                                )
-                            }
-                        }
-                    }
-
-                    // Center Play/Pause & Skip 10s Controls
-                    Row(
-                        modifier = Modifier.align(Alignment.Center),
-                        horizontalArrangement = Arrangement.spacedBy(32.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(
-                            onClick = {
-                                val nextPos = (currentPositionMs - 10_000).coerceAtLeast(0)
-                                videoViewRef?.seekTo(nextPos)
-                                currentPositionMs = nextPos
-                            }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Replay10,
-                                contentDescription = "Rewind 10 seconds",
-                                tint = Color.White,
-                                modifier = Modifier.size(34.dp)
-                            )
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .size(58.dp)
-                                .clip(CircleShape)
-                                .background(Color.Black.copy(alpha = 0.6f))
-                                .clickable { viewModel.togglePlayPause() }
-                                .testTag("player_play_pause_button"),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                                contentDescription = if (isPlaying) "Pause" else "Play",
-                                tint = Color.White,
-                                modifier = Modifier.size(36.dp)
-                            )
-                        }
-
-                        IconButton(
-                            onClick = {
-                                val nextPos = (currentPositionMs + 10_000).coerceAtMost(totalDurationMs)
-                                videoViewRef?.seekTo(nextPos)
-                                currentPositionMs = nextPos
-                            }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Forward10,
-                                contentDescription = "Forward 10 seconds",
-                                tint = Color.White,
-                                modifier = Modifier.size(34.dp)
-                            )
-                        }
-                    }
-
-                    // Bottom Scrubber & Timestamp
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .align(Alignment.BottomCenter)
-                            .padding(horizontal = 12.dp, vertical = 4.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "${formatDuration(currentPositionMs / 1000)} / ${formatDuration(totalDurationMs / 1000)}",
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Text(
-                                text = "${videoQuality} • ${playbackSpeed}x",
-                                color = Color.White.copy(alpha = 0.85f),
-                                fontSize = 11.sp
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(22.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Slider(
-                                value = if (totalDurationMs > 0) {
-                                    (currentPositionMs.toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f)
-                                } else 0f,
-                                onValueChange = { newFraction ->
-                                    val targetMs = (newFraction * totalDurationMs).toInt()
-                                    currentPositionMs = targetMs
-                                    videoViewRef?.seekTo(targetMs)
-                                    viewModel.updateWatchProgress(video, newFraction)
-                                },
-                                colors = SliderDefaults.colors(
-                                    thumbColor = YouTubeRed,
-                                    activeTrackColor = YouTubeRed,
-                                    inactiveTrackColor = Color.White.copy(alpha = 0.35f)
-                                ),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            // SponsorBlock Color-Coded Segment Bar Overlay
-                            if (isSponsorBlockEnabled && sponsorSegments.isNotEmpty() && totalDurationMs > 0) {
-                                val totalSec = (totalDurationMs / 1000f).coerceAtLeast(1f)
-                                BoxWithConstraints(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 10.dp)
-                                        .height(4.dp)
-                                        .align(Alignment.Center)
-                                ) {
-                                    val barWidth = maxWidth
-                                    sponsorSegments.forEach { seg ->
-                                        val startFrac = (seg.startTimeSec / totalSec).coerceIn(0f, 1f)
-                                        val endFrac = (seg.endTimeSec / totalSec).coerceIn(startFrac, 1f)
-                                        val widthFrac = (endFrac - startFrac).coerceAtLeast(0.02f)
-                                        val catColor = Color(SponsorCategory.fromKey(seg.category).colorHex)
-                                        Box(
-                                            modifier = Modifier
-                                                .offset(x = barWidth * startFrac)
-                                                .width(barWidth * widthFrac)
-                                                .fillMaxHeight()
-                                                .background(catColor)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    Text("Skip ${SponsorCategory.fromKey(seg.category).displayName}")
                 }
+            }
+
+            IconButton(
+                onClick = { viewModel.minimizePlayer() },
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .testTag("minimize_player_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.KeyboardArrowDown,
+                    contentDescription = "Minimize player",
+                    tint = Color.White,
+                    modifier = Modifier.size(28.dp)
+                )
             }
         }
 
@@ -1011,7 +693,7 @@ fun VideoWatchOverlay(
                                 modifier = Modifier.clickable {
                                     val targetMs = chapter.timeSeconds * 1000
                                     currentPositionMs = targetMs
-                                    videoViewRef?.seekTo(targetMs)
+                                    playerController?.seekTo(targetMs / 1000f)
                                     viewModel.showSnackbar("Jumped to chapter: ${chapter.title}")
                                 }
                             ) {
@@ -1233,7 +915,7 @@ fun VideoWatchOverlay(
                             .padding(vertical = 3.dp)
                             .clickable {
                                 val targetMs = (seg.endTimeSec * 1000).coerceAtMost(totalDurationMs)
-                                videoViewRef?.seekTo(targetMs)
+                                playerController?.seekTo(targetMs / 1000f)
                                 currentPositionMs = targetMs
                                 viewModel.recordSponsorSkip(seg)
                                 showSubmitSponsorSheet = false
@@ -1707,12 +1389,7 @@ private fun LiveChatStreamSection(
 ) {
     var chatInput by remember { mutableStateOf("") }
     val liveMessages = remember {
-        mutableStateListOf(
-            "Alex_RTX" to "That analog sub-bass filter sweep is unreal 🔥",
-            "SynthRider99" to "Listening from Tokyo at 4AM while writing Kotlin!",
-            "ElenaVance" to "Can we get a closeup of the Prophet-6 patch bay?",
-            "Kaelen_VFX" to "Audio quality on this stream is crystal clear 10/10"
-        )
+        mutableStateListOf<Pair<String, String>>()
     }
 
     Surface(
@@ -1769,14 +1446,14 @@ private fun LiveChatStreamSection(
                 OutlinedTextField(
                     value = chatInput,
                     onValueChange = { chatInput = it },
-                    placeholder = { Text("Chat publicly as Christian Studio...") },
+                    placeholder = { Text("Live chat from YouTube isn't connected yet") },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
                 )
                 IconButton(
                     onClick = {
                         if (chatInput.isNotBlank()) {
-                            liveMessages.add("Christian Studio" to chatInput.trim())
+                            liveMessages.add("You" to chatInput.trim())
                             onSendChatMessage(chatInput.trim())
                             chatInput = ""
                         }

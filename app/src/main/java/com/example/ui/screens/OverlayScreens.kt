@@ -7,6 +7,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -40,6 +43,7 @@ fun SearchOverlayScreen(viewModel: YouTubeViewModel) {
     val searchHistory by viewModel.searchHistory.collectAsState()
     val searchResults by viewModel.searchResults.collectAsState()
     val durationFilter by viewModel.searchDurationFilter.collectAsState()
+    val isSearching by viewModel.isSearching.collectAsState()
 
     BackHandler { viewModel.closeSearch() }
 
@@ -63,6 +67,8 @@ fun SearchOverlayScreen(viewModel: YouTubeViewModel) {
                     onValueChange = { viewModel.updateSearchQuery(it) },
                     placeholder = { Text("Search YouTube") },
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { viewModel.submitSearch(searchQuery) }),
                     shape = RoundedCornerShape(24.dp),
                     modifier = Modifier.weight(1f).testTag("search_input_field"),
                     trailingIcon = {
@@ -128,11 +134,21 @@ fun SearchOverlayScreen(viewModel: YouTubeViewModel) {
                     }
                 }
 
+                if (isSearching) {
+                    item {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().padding(24.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(color = YouTubeRed)
+                        }
+                    }
+                }
+
                 items(searchResults, key = { "res_${it.id}" }) { video ->
                     YouTubeVideoCard(
                         video = video,
                         onVideoClick = {
-                            viewModel.submitSearch(searchQuery.ifBlank { video.title })
                             viewModel.closeSearch()
                             viewModel.openVideo(video)
                         },

@@ -32,7 +32,9 @@ data class VideoEntity(
     val lastWatchedTimestamp: Long = 0L,
     val audioTrackTitle: String = "Original Audio",
     val chaptersJson: String = "", // Format: "0:00 Intro|1:15 Setup|3:40 Deep Dive|7:10 Verdict"
-    val isUserUploaded: Boolean = false
+    val isUserUploaded: Boolean = false,
+    val homeOrder: Int = -1,
+    val shortsOrder: Int = -1
 )
 
 @Entity(tableName = "channels")
